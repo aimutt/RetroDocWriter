@@ -18,6 +18,17 @@ bool RichFileDocument::IsRtfPath(const std::string& path)
     return eq(n - 4, '.') && eq(n - 3, 'r') && eq(n - 2, 't') && eq(n - 1, 'f');
 }
 
+std::string RichFileDocument::WithDefaultExtension(const std::string& path)
+{
+    if (path.empty()) return path;
+    auto   slash     = path.find_last_of("/\\");
+    size_t baseStart = (slash == std::string::npos) ? 0 : slash + 1;
+    // No '.' in the final path component → no extension → default to .rtf.
+    if (path.find('.', baseStart) == std::string::npos)
+        return path + ".rtf";
+    return path;
+}
+
 bool RichFileDocument::Load(const std::string& path)
 {
     // Reset the captured header on every Load so a plain-text load doesn't

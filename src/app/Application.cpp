@@ -2221,13 +2221,14 @@ void Application::CommitPrompt()
     if (mode == PromptMode::Open)
     {
         if (!m_promptText.empty())
-            OpenFile(m_promptText);
+            OpenFile(RichFileDocument::WithDefaultExtension(m_promptText));
     }
     else if (mode == PromptMode::SaveAs)
     {
         if (!m_promptText.empty())
         {
-            if (m_document->SaveAs(m_promptText,
+            std::string path = RichFileDocument::WithDefaultExtension(m_promptText);
+            if (m_document->SaveAs(path,
                                    m_documentFontSettings.face,
                                    FontSizePoints(m_documentFontSettings.size),
                                    CurrentRtfPage()))
@@ -3591,12 +3592,12 @@ void Application::Render()
     {
         case PromptMode::Open:
             uiState.dialogTitle   = "Open File";
-            uiState.dialogPrompt  = "File path:";
+            uiState.dialogPrompt  = "File path (.rtf default):";
             uiState.dialogPrompt2 = "";
             break;
         case PromptMode::SaveAs:
             uiState.dialogTitle   = "Save As";
-            uiState.dialogPrompt  = "File path:";
+            uiState.dialogPrompt  = "File path (.rtf default):";
             uiState.dialogPrompt2 = "";
             break;
         case PromptMode::Find:
