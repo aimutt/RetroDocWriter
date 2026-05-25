@@ -917,20 +917,35 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             StrokeRect(m_sdl, pageX + mLeft, pageTopY + mTop, usableW, usableH,
                        mutedMargin);
 
-        // Optional footer: filename lower-left, "Page N of M" lower-right,
-        // vertically centered in the bottom-margin band (so it never steals
-        // from the text area — pagination is unaffected). Mirrors Print.cpp.
-        if (ctx.showHeaderFooter)
+        // Optional header (top margin) and footer (bottom margin): file name
+        // left, "Page N of M" right, each slot drawn only if its flag is set.
+        // Both sit in the margins, so they never steal from the text area —
+        // pagination is unaffected. Mirrors Print.cpp.
         {
-            int lineH   = defaultCache->LineHeight();
-            int bandTop = pageTopY + pageH - mBottom;
-            int footerY = bandTop + std::max(0, (mBottom - lineH) / 2);
-            if (!ctx.documentName.empty())
-                drawStr(pageX + mLeft, footerY, ctx.documentName, m_theme.dimText);
+            const int lineH   = defaultCache->LineHeight();
             std::string pageStr = "Page " + std::to_string(p + 1)
                                 + " of "  + std::to_string(totalPages);
-            int rightX = pageX + pageW - mRight - strWidth(pageStr);
-            drawStr(rightX, footerY, pageStr, m_theme.dimText);
+            // Draw one band's slots at the given y.
+            auto drawBand = [&](int y, bool showName, bool showPage) {
+                if (showName && !ctx.documentName.empty())
+                    drawStr(pageX + mLeft, y, ctx.documentName, m_theme.dimText);
+                if (showPage)
+                {
+                    int rightX = pageX + pageW - mRight - strWidth(pageStr);
+                    drawStr(rightX, y, pageStr, m_theme.dimText);
+                }
+            };
+            if (ctx.headerShowFilename || ctx.headerShowPageNumber)
+            {
+                int headerY = pageTopY + std::max(0, (mTop - lineH) / 2);
+                drawBand(headerY, ctx.headerShowFilename, ctx.headerShowPageNumber);
+            }
+            if (ctx.footerShowFilename || ctx.footerShowPageNumber)
+            {
+                int bandTop = pageTopY + pageH - mBottom;
+                int footerY = bandTop + std::max(0, (mBottom - lineH) / 2);
+                drawBand(footerY, ctx.footerShowFilename, ctx.footerShowPageNumber);
+            }
         }
     }
 

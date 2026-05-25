@@ -72,8 +72,12 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "(coming soon)", "" },
         }},
         { "Page", 36, {
-            { "Margins...",      ""  },
-            { "Header/Footer",   ""  },   // shortcut column shows On/Off at draw time
+            { "Margins...",          ""  },
+            // Four independent slots; each shows On/Off live at draw time.
+            { "Header: File Name",   ""  },
+            { "Header: Page Number", ""  },
+            { "Footer: File Name",   ""  },
+            { "Footer: Page Number", ""  },
         }},
         { "Tools", 42, {
             { "Add to Dictionary...",      "" },

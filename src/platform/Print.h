@@ -55,10 +55,13 @@ struct PrintRequest
     // every paragraph left-aligned.
     const std::vector<uint8_t>* alignment = nullptr;
 
-    // When true, stamp the document name (lower-left) and "Page N of M"
-    // (lower-right) in each page's bottom margin. Default off; matches the
-    // on-screen WysiwygRenderer footer so print stays WYSIWYG.
-    bool showHeaderFooter = false;
+    // Four independent header/footer slots: file name (left) and page number
+    // (right) in the top-margin header and/or bottom-margin footer. All
+    // default off; matches the on-screen WysiwygRenderer so print is WYSIWYG.
+    bool headerShowFilename   = false;
+    bool headerShowPageNumber = false;
+    bool footerShowFilename   = false;
+    bool footerShowPageNumber = false;
 };
 
 // Returns the installed printers. First entry is the system default (or the
