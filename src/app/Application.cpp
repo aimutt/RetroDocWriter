@@ -1442,7 +1442,7 @@ void Application::HandleMouseDown(int cellCol, int cellRow, int px, int py, Uint
             m_activeMenu, cellCol, cellRow, m_screenColumns,
             m_wordWrap, m_showWordCount,
             m_spellCheckEnabled, m_highlightMisspelled,
-            m_showMargins);
+            m_showMargins, m_showHeaderFooter);
         if (item >= 0)
         {
             // ExecuteMenuItem already filters separators (empty label).
@@ -1666,7 +1666,7 @@ void Application::HandleMouseMotion(int cellCol, int cellRow, int px, int py)
             m_activeMenu, cellCol, cellRow, m_screenColumns,
             m_wordWrap, m_showWordCount,
             m_spellCheckEnabled, m_highlightMisspelled,
-            m_showMargins);
+            m_showMargins, m_showHeaderFooter);
         if (item >= 0 && item != m_activeItem)
         {
             // Skip separators — keep the previous highlighted item.
@@ -2212,6 +2212,7 @@ void Application::NewFile()
     m_selection.Clear();
     m_undoHistory.ClearAll();
     m_lastActionWasInsert = false;
+    m_showHeaderFooter = false;  // per-doc setting; a fresh doc starts off
     m_statusMessage = "New file";
     UpdateWindowTitle();
 }
@@ -2506,7 +2507,8 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
         case 5: // Page
             switch (itemIdx)
             {
-                case 0: OpenMarginsDialog(); break; // Margins...
+                case 0: OpenMarginsDialog();      break; // Margins...
+                case 1: ToggleShowHeaderFooter(); break; // Header/Footer
                 default: break;
             }
             break;
@@ -3016,6 +3018,16 @@ void Application::ToggleShowMargins()
     SaveGlobalSettings();
 }
 
+void Application::ToggleShowHeaderFooter()
+{
+    m_showHeaderFooter = !m_showHeaderFooter;
+    m_statusMessage = m_showHeaderFooter ? "Header/footer shown"
+                                         : "Header/footer hidden";
+    m_needsRedraw   = true;
+    // Per-document setting — persist to the sidecar, not config.ini.
+    WriteSidecarForCurrentDocument();
+}
+
 void Application::CheckJustCompletedWord()
 {
     // The cursor sits just after the boundary character; the word ended at
@@ -3247,6 +3259,7 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.formats         = &m_document->Buffer().Formats();
     m_printRequest.pageBreakBefore = &m_document->Buffer().PageBreaks();
     m_printRequest.alignment       = &m_document->Buffer().Alignments();
+    m_printRequest.showHeaderFooter = m_showHeaderFooter;
 
     m_promptMode    = PromptMode::None;
     m_statusMessage = "Printing...";
@@ -3505,8 +3518,9 @@ void Application::MarginBackspace()
 
 void Application::CaptureFileSettings(FileSettings& s) const
 {
-    s.SetBool("word_wrap",       m_wordWrap);
-    s.SetBool("show_word_count", m_showWordCount);
+    s.SetBool("word_wrap",         m_wordWrap);
+    s.SetBool("show_word_count",   m_showWordCount);
+    s.SetBool("show_header_footer", m_showHeaderFooter);
     s.SetString("margin_top",    std::to_string(m_margins.topIn));
     s.SetString("margin_bottom", std::to_string(m_margins.bottomIn));
     s.SetString("margin_left",   std::to_string(m_margins.leftIn));
@@ -3519,6 +3533,10 @@ void Application::ApplyFileSettings(const FileSettings& s)
         SetWordWrap(s.GetBool("word_wrap"));
     if (s.Has("show_word_count"))
         m_showWordCount = s.GetBool("show_word_count");
+    // Per-document; explicit reset to off when the key is absent so the
+    // value never leaks from a previously-open document.
+    m_showHeaderFooter = s.Has("show_header_footer")
+                       ? s.GetBool("show_header_footer") : false;
     // Legacy `wysiwyg` sidecar key from before the product split is silently
     // ignored on read; RetroDocWriter is always WYSIWYG now.
     auto readDouble = [&](const char* key, double& out) {
@@ -3788,6 +3806,7 @@ void Application::Render()
 
     // WYSIWYG margins toggle (Options > Show Margins).
     uiState.showMargins         = m_showMargins;
+    uiState.showHeaderFooter    = m_showHeaderFooter;
 
     // Print dialog snapshot
     uiState.printDialogActive   = (m_promptMode == PromptMode::PrintDialog);
@@ -3927,7 +3946,9 @@ WysiwygRenderer::DrawContext Application::BuildWysiwygDrawContext() const
     // shrinks the cursor immediately, before the user types anything.
     ctx.insertFace      = ctx.face;
     ctx.insertPointSize = ctx.pointSize;
-    ctx.showMargins     = m_showMargins;
+    ctx.showMargins      = m_showMargins;
+    ctx.showHeaderFooter = m_showHeaderFooter;
+    ctx.documentName     = m_document ? m_document->DisplayName() : std::string();
     if (m_currentFace != CharFormat::Inherit
         && m_currentFace < static_cast<uint8_t>(FontFace::Count_))
         ctx.insertFace = static_cast<FontFace>(m_currentFace);

@@ -54,6 +54,11 @@ struct PrintRequest
     // each visual segment to match the on-screen WYSIWYG layout. Null =
     // every paragraph left-aligned.
     const std::vector<uint8_t>* alignment = nullptr;
+
+    // When true, stamp the document name (lower-left) and "Page N of M"
+    // (lower-right) in each page's bottom margin. Default off; matches the
+    // on-screen WysiwygRenderer footer so print stays WYSIWYG.
+    bool showHeaderFooter = false;
 };
 
 // Returns the installed printers. First entry is the system default (or the

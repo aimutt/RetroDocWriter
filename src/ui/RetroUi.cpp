@@ -528,7 +528,7 @@ namespace
     std::string LiveShortcut(int menuIdx, int itemIdx, const MenuItemDef& item,
                              bool wordWrap, bool showWordCount,
                              bool spellCheckEnabled, bool highlightMisspelled,
-                             bool showMargins)
+                             bool showMargins, bool showHeaderFooter)
     {
         // Options is menu idx 7 in RetroDocWriter (after Format was inserted at 2).
         // Options menu (menuIdx 7):
@@ -538,6 +538,8 @@ namespace
         if (menuIdx == 7 && itemIdx == 4) return spellCheckEnabled   ? "On" : "Off";
         if (menuIdx == 7 && itemIdx == 5) return highlightMisspelled ? "On" : "Off";
         if (menuIdx == 7 && itemIdx == 6) return showMargins         ? "On" : "Off";
+        // Page menu (menuIdx 5): 0=Margins..., 1=Header/Footer.
+        if (menuIdx == 5 && itemIdx == 1) return showHeaderFooter    ? "On" : "Off";
         return item.shortcut;
     }
 
@@ -548,7 +550,7 @@ namespace
     DropdownRect ComputeDropdownRect(int menuIdx, int screenColumns,
                                      bool wordWrap, bool showWordCount,
                                      bool spellCheckEnabled, bool highlightMisspelled,
-                                     bool showMargins,
+                                     bool showMargins, bool showHeaderFooter,
                                      const Layout& layout)
     {
         DropdownRect r{ 0, layout.ROW_SEP_TOP, 0, 0 };
@@ -565,7 +567,7 @@ namespace
             std::string sc = LiveShortcut(menuIdx, i, item,
                                           wordWrap, showWordCount,
                                           spellCheckEnabled, highlightMisspelled,
-                                          showMargins);
+                                          showMargins, showHeaderFooter);
             if (!sc.empty())
                 w += static_cast<int>(sc.size()) + 2; // two-space gap
             innerWidth = std::max(innerWidth, w);
@@ -596,7 +598,7 @@ void RetroUi::DrawDropdownMenu(ScreenBuffer& buffer, int menuIdx, int activeItem
         menuIdx, buffer.Columns(),
         state.wordWrap, state.showWordCount,
         state.spellCheckEnabled, state.highlightMisspelled,
-        state.showMargins,
+        state.showMargins, state.showHeaderFooter,
         m_layout);
 
     int startCol  = rect.startCol;
@@ -653,7 +655,8 @@ void RetroUi::DrawDropdownMenu(ScreenBuffer& buffer, int menuIdx, int activeItem
                                                 state.wordWrap, state.showWordCount,
                                                 state.spellCheckEnabled,
                                                 state.highlightMisspelled,
-                                                state.showMargins);
+                                                state.showMargins,
+                                                state.showHeaderFooter);
             if (!shortcut.empty())
             {
                 Color scFg = isHighlighted ? m_theme.reverseForeground : m_theme.dimText;
@@ -694,13 +697,13 @@ int RetroUi::HitTestDropdownItem(int menuIdx, int cellCol, int cellRow,
                                  int screenColumns,
                                  bool wordWrap, bool showWordCount,
                                  bool spellCheckEnabled, bool highlightMisspelled,
-                                 bool showMargins) const
+                                 bool showMargins, bool showHeaderFooter) const
 {
     DropdownRect rect = ComputeDropdownRect(
         menuIdx, screenColumns,
         wordWrap, showWordCount,
         spellCheckEnabled, highlightMisspelled,
-        showMargins,
+        showMargins, showHeaderFooter,
         m_layout);
     if (rect.outerWidth <= 0 || rect.numItems <= 0) return -1;
 

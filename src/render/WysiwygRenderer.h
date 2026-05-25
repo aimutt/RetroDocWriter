@@ -85,6 +85,13 @@ public:
         // page. Defaults to true so behavior is unchanged for callers that
         // don't set it explicitly.
         bool showMargins = true;
+
+        // When true, Draw paints the document name (lower-left) and
+        // "Page N of M" (lower-right) in each page's bottom margin — the same
+        // footer the print path emits, so the on-screen view is WYSIWYG.
+        // Default off. `documentName` is the basename shown at lower-left.
+        bool        showHeaderFooter = false;
+        std::string documentName;
     };
 
     void Draw(const DrawContext& ctx);
