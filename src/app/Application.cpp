@@ -698,6 +698,23 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
             if (ctrl) ToggleUnderline();
             break;
 
+        // --- Paragraph alignment (Format menu shortcuts) ---
+        case SDL_SCANCODE_L:
+            if (ctrl) SetParagraphAlignment(ParagraphAlign::Left);
+            break;
+
+        case SDL_SCANCODE_E:
+            if (ctrl) SetParagraphAlignment(ParagraphAlign::Center);
+            break;
+
+        case SDL_SCANCODE_R:
+            if (ctrl) SetParagraphAlignment(ParagraphAlign::Right);
+            break;
+
+        case SDL_SCANCODE_J:
+            if (ctrl) SetParagraphAlignment(ParagraphAlign::Justify);
+            break;
+
         case SDL_SCANCODE_F2:
             SaveDocument();
             break;
@@ -2013,7 +2030,7 @@ void Application::EnsureUndoBeforeInsert()
 
 void Application::ApplyUndoState(const RichUndoState& s)
 {
-    m_document->Buffer().SetLines(s.lines, s.formats, s.pageBreaks);
+    m_document->Buffer().SetLines(s.lines, s.formats, s.pageBreaks, s.alignment);
     m_cursor.row    = s.cursorRow;
     m_cursor.column = s.cursorCol;
     m_selection.Clear();
@@ -2460,13 +2477,19 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
         case 2: // Format
             switch (itemIdx)
             {
-                case 0: ToggleBold();          break;
-                case 1: ToggleItalic();        break;
-                case 2: ToggleUnderline();     break;
-                case 3: ToggleStrikethrough(); break;
-                case 4: OpenColorDialog();     break;
-                case 5: OpenHighlightDialog(); break;
-                case 6: InsertPageBreak();     break;
+                case 0:  ToggleBold();          break;
+                case 1:  ToggleItalic();        break;
+                case 2:  ToggleUnderline();     break;
+                case 3:  ToggleStrikethrough(); break;
+                case 4:  OpenColorDialog();     break;
+                case 5:  OpenHighlightDialog(); break;
+                // 6 = separator
+                case 7:  SetParagraphAlignment(ParagraphAlign::Left);    break;
+                case 8:  SetParagraphAlignment(ParagraphAlign::Center);  break;
+                case 9:  SetParagraphAlignment(ParagraphAlign::Right);   break;
+                case 10: SetParagraphAlignment(ParagraphAlign::Justify); break;
+                // 11 = separator
+                case 12: InsertPageBreak();     break;
                 default: break;
             }
             break;
@@ -3223,6 +3246,7 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.bold            = FontFaceIsBold(m_documentFontSettings.face);
     m_printRequest.formats         = &m_document->Buffer().Formats();
     m_printRequest.pageBreakBefore = &m_document->Buffer().PageBreaks();
+    m_printRequest.alignment       = &m_document->Buffer().Alignments();
 
     m_promptMode    = PromptMode::None;
     m_statusMessage = "Printing...";
@@ -3354,6 +3378,39 @@ void Application::ToggleBold()          { ApplyStyleAction(CharStyle::Bold); }
 void Application::ToggleItalic()        { ApplyStyleAction(CharStyle::Italic); }
 void Application::ToggleUnderline()     { ApplyStyleAction(CharStyle::Underline); }
 void Application::ToggleStrikethrough() { ApplyStyleAction(CharStyle::Strikethrough); }
+
+void Application::SetParagraphAlignment(ParagraphAlign a)
+{
+    // Span of paragraphs to align: the selection's rows, or just the cursor's
+    // row when there's no active selection. Alignment is a paragraph property,
+    // so unlike ApplyStyleAction there's no "next-typed" no-selection mode.
+    int firstRow = m_cursor.row;
+    int lastRow  = m_cursor.row;
+    if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
+    {
+        int sr, sc, er, ec;
+        m_selection.GetRange(m_cursor.row, m_cursor.column, sr, sc, er, ec);
+        firstRow = sr;
+        lastRow  = er;
+    }
+
+    PushUndoBeforeEdit();
+    for (int row = firstRow; row <= lastRow; ++row)
+        m_document->Buffer().SetAlignment(row, a);
+    m_document->MarkDirty();
+    UpdateWindowTitle();
+    m_lastActionWasInsert = false;
+
+    const char* name = "Left";
+    switch (a)
+    {
+        case ParagraphAlign::Left:    name = "Left";     break;
+        case ParagraphAlign::Center:  name = "Centered"; break;
+        case ParagraphAlign::Right:   name = "Right";    break;
+        case ParagraphAlign::Justify: name = "Justified";break;
+    }
+    m_statusMessage = std::string("Alignment: ") + name;
+}
 
 // ---------------------------------------------------------------------------
 // Margins dialog

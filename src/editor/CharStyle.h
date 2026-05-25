@@ -16,6 +16,19 @@ namespace CharStyle
     };
 }
 
+// Per-paragraph horizontal alignment. A "paragraph" is one TextBuffer row
+// (the RTF writer emits \par between rows); word-wrap into multiple visual
+// segments happens only at render time. Stored per row in
+// FormattedTextBuffer::m_alignment and round-tripped through RTF as
+// \ql / \qc / \qr / \qj. Left is the default (RTF's default too).
+enum class ParagraphAlign : uint8_t
+{
+    Left    = 0,
+    Center  = 1,
+    Right   = 2,
+    Justify = 3,
+};
+
 // Per-character formatting record: one byte each for style bits, font
 // face override, and font size override. Stored in FormattedTextBuffer's
 // parallel m_formats vector — exactly one CharFormat per character byte

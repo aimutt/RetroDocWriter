@@ -56,6 +56,12 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "Strikethrough",       ""       },
             { "Text Color...",       ""       },
             { "Highlight Color...",  ""       },
+            { "",                    ""       },
+            { "Align Left",          "^L"     },
+            { "Center",              "^E"     },
+            { "Align Right",         "^R"     },
+            { "Justify",             "^J"     },
+            { "",                    ""       },
             { "Insert Page Break",   "^Enter" },
         }},
         { "Search", 22, {

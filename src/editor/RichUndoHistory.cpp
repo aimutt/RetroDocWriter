@@ -10,6 +10,7 @@ RichUndoState RichUndoHistory::Snapshot(const FormattedTextBuffer& buf,
     s.lines.reserve(static_cast<size_t>(n));
     s.formats.reserve(static_cast<size_t>(n));
     s.pageBreaks.reserve(static_cast<size_t>(n));
+    s.alignment.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i)
     {
         s.lines.push_back(buf.Line(i));
@@ -20,6 +21,7 @@ RichUndoState RichUndoHistory::Snapshot(const FormattedTextBuffer& buf,
             row_fmt.push_back(buf.FormatAt(i, c));
         s.formats.push_back(std::move(row_fmt));
         s.pageBreaks.push_back(buf.PageBreakBefore(i));
+        s.alignment.push_back(static_cast<uint8_t>(buf.Alignment(i)));
     }
     return s;
 }

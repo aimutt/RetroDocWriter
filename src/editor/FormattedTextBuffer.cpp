@@ -8,6 +8,7 @@ FormattedTextBuffer::FormattedTextBuffer()
     // layers) holds from the start.
     m_formats.emplace_back();
     m_pageBreakBefore.emplace_back(false);
+    m_alignment.emplace_back(static_cast<uint8_t>(ParagraphAlign::Left));
 }
 
 bool FormattedTextBuffer::PageBreakBefore(int row) const
@@ -20,6 +21,19 @@ void FormattedTextBuffer::SetPageBreakBefore(int row, bool on)
 {
     if (row < 0 || row >= static_cast<int>(m_pageBreakBefore.size())) return;
     m_pageBreakBefore[row] = on;
+}
+
+ParagraphAlign FormattedTextBuffer::Alignment(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(m_alignment.size()))
+        return ParagraphAlign::Left;
+    return static_cast<ParagraphAlign>(m_alignment[row]);
+}
+
+void FormattedTextBuffer::SetAlignment(int row, ParagraphAlign a)
+{
+    if (row < 0 || row >= static_cast<int>(m_alignment.size())) return;
+    m_alignment[row] = static_cast<uint8_t>(a);
 }
 
 CharFormat FormattedTextBuffer::FormatAt(int row, int col) const
@@ -37,24 +51,35 @@ bool FormattedTextBuffer::HasAnyFormatting() const
             if (!f.IsPlain()) return true;
     for (bool b : m_pageBreakBefore)
         if (b) return true;
+    for (uint8_t a : m_alignment)
+        if (a != static_cast<uint8_t>(ParagraphAlign::Left)) return true;
     return false;
 }
 
 void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
                                    std::vector<std::vector<CharFormat>> formats)
 {
-    SetLines(std::move(lines), std::move(formats), {});
+    SetLines(std::move(lines), std::move(formats), {}, {});
 }
 
 void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
                                    std::vector<std::vector<CharFormat>> formats,
                                    std::vector<bool> pageBreakBefore)
 {
+    SetLines(std::move(lines), std::move(formats),
+             std::move(pageBreakBefore), {});
+}
+
+void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
+                                   std::vector<std::vector<CharFormat>> formats,
+                                   std::vector<bool> pageBreakBefore,
+                                   std::vector<uint8_t> alignment)
+{
     if (lines.empty())
         lines.emplace_back();
-    // Pad formats and pageBreakBefore to match lines exactly. Size
-    // mismatches (truncated sidecar / RTF parser bug) become default
-    // CharFormat / page-break-false entries.
+    // Pad formats, pageBreakBefore, and alignment to match lines exactly.
+    // Size mismatches (truncated sidecar / RTF parser bug) become default
+    // CharFormat / page-break-false / Left-aligned entries.
     while (formats.size() < lines.size())
         formats.emplace_back();
     formats.resize(lines.size());
@@ -62,10 +87,13 @@ void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
         formats[i].resize(lines[i].size(), CharFormat{});
 
     pageBreakBefore.resize(lines.size(), false);
+    alignment.resize(lines.size(),
+                     static_cast<uint8_t>(ParagraphAlign::Left));
 
     m_text.SetLines(std::move(lines));
     m_formats = std::move(formats);
     m_pageBreakBefore = std::move(pageBreakBefore);
+    m_alignment = std::move(alignment);
 }
 
 void FormattedTextBuffer::SetLinesPlain(std::vector<std::string> lines)
@@ -77,6 +105,8 @@ void FormattedTextBuffer::SetLinesPlain(std::vector<std::string> lines)
     for (size_t i = 0; i < lines.size(); ++i)
         m_formats[i].assign(lines[i].size(), CharFormat{});
     m_pageBreakBefore.assign(lines.size(), false);
+    m_alignment.assign(lines.size(),
+                       static_cast<uint8_t>(ParagraphAlign::Left));
     m_text.SetLines(std::move(lines));
 }
 
@@ -124,6 +154,8 @@ void FormattedTextBuffer::Backspace(int col, int row)
         m_formats.erase(m_formats.begin() + row);
         if (row < static_cast<int>(m_pageBreakBefore.size()))
             m_pageBreakBefore.erase(m_pageBreakBefore.begin() + row);
+        if (row < static_cast<int>(m_alignment.size()))
+            m_alignment.erase(m_alignment.begin() + row);
     }
 }
 
@@ -146,6 +178,8 @@ void FormattedTextBuffer::DeleteForward(int col, int row)
         m_formats.erase(m_formats.begin() + row + 1);
         if (row + 1 < static_cast<int>(m_pageBreakBefore.size()))
             m_pageBreakBefore.erase(m_pageBreakBefore.begin() + row + 1);
+        if (row + 1 < static_cast<int>(m_alignment.size()))
+            m_alignment.erase(m_alignment.begin() + row + 1);
     }
 }
 
@@ -167,6 +201,16 @@ void FormattedTextBuffer::InsertNewline(int col, int row)
         m_pageBreakBefore.insert(m_pageBreakBefore.begin() + row + 1, false);
     else
         m_pageBreakBefore.push_back(false);
+    // The split paragraph keeps its alignment on both halves: the new row
+    // inherits the current row's alignment so pressing Enter inside a
+    // centered paragraph leaves both parts centered.
+    uint8_t inherit = (row < static_cast<int>(m_alignment.size()))
+                      ? m_alignment[row]
+                      : static_cast<uint8_t>(ParagraphAlign::Left);
+    if (static_cast<int>(m_alignment.size()) >= row + 1)
+        m_alignment.insert(m_alignment.begin() + row + 1, inherit);
+    else
+        m_alignment.push_back(inherit);
 }
 
 void FormattedTextBuffer::InsertText(int col, int row, const std::string& text,
@@ -228,6 +272,12 @@ void FormattedTextBuffer::InsertText(int col, int row, const std::string& text,
     int newRows = static_cast<int>(parts.size()) - 1;
     for (int i = 0; i < newRows; ++i)
         m_pageBreakBefore.insert(m_pageBreakBefore.begin() + row + 1, false);
+    // New rows inherit the alignment of the row the paste started on.
+    uint8_t inheritAlign = (row < static_cast<int>(m_alignment.size()))
+                           ? m_alignment[row]
+                           : static_cast<uint8_t>(ParagraphAlign::Left);
+    for (int i = 0; i < newRows; ++i)
+        m_alignment.insert(m_alignment.begin() + row + 1, inheritAlign);
 }
 
 void FormattedTextBuffer::DeleteRange(int startRow, int startCol,
@@ -267,6 +317,13 @@ void FormattedTextBuffer::DeleteRange(int startRow, int startCol,
     if (eraseLo < eraseHi)
         m_pageBreakBefore.erase(m_pageBreakBefore.begin() + eraseLo,
                                 m_pageBreakBefore.begin() + eraseHi);
+    // Same slice for alignment: rows startRow+1..endRow vanish; startRow's
+    // own alignment survives.
+    int aEraseHi = std::min<int>(endRow + 1, static_cast<int>(m_alignment.size()));
+    int aEraseLo = std::min<int>(startRow + 1, aEraseHi);
+    if (aEraseLo < aEraseHi)
+        m_alignment.erase(m_alignment.begin() + aEraseLo,
+                          m_alignment.begin() + aEraseHi);
 }
 
 // ---------------------------------------------------------------------------
