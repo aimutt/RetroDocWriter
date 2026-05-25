@@ -102,6 +102,27 @@ inline bool FontFaceIsBold(FontFace face)
         || face == FontFace::OpenSansBold;
 }
 
+// Bold counterpart of a face (itself if it's already bold, or has no bold
+// file — e.g. VT323). The bold variant shares the same FontFaceFamily() name,
+// so the GDI print path can register its TTF and let CreateFont(FW_BOLD) bind
+// to a real weight-700 member instead of relying on faux-bold synthesis (which
+// is unreliable for privately-registered fonts).
+inline FontFace FontFaceBoldVariant(FontFace face)
+{
+    switch (face)
+    {
+        case FontFace::CascadiaMono:  case FontFace::CascadiaMonoBold:  return FontFace::CascadiaMonoBold;
+        case FontFace::JetBrainsMono: case FontFace::JetBrainsMonoBold: return FontFace::JetBrainsMonoBold;
+        case FontFace::IBMPlexMono:   case FontFace::IBMPlexMonoBold:   return FontFace::IBMPlexMonoBold;
+        case FontFace::EBGaramond:    case FontFace::EBGaramondBold:    return FontFace::EBGaramondBold;
+        case FontFace::SourceSerif:   case FontFace::SourceSerifBold:   return FontFace::SourceSerifBold;
+        case FontFace::SourceSans:    case FontFace::SourceSansBold:    return FontFace::SourceSansBold;
+        case FontFace::OpenSans:      case FontFace::OpenSansBold:      return FontFace::OpenSansBold;
+        case FontFace::VT323:         return FontFace::VT323;  // no bold file
+        default:                      return face;
+    }
+}
+
 // True for fixed-pitch faces (uniform per-glyph advance). The cell-grid
 // chrome and RetroEdit's editor rely on uniform advance; RetroDocWriter's
 // WysiwygRenderer measures each glyph independently and works with either.
