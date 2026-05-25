@@ -176,6 +176,59 @@ namespace
         emit(n);
         return out;
     }
+
+    // Per-segment alignment geometry for the print path — integer mirror of
+    // WysiwygRenderer's ComputeSegAlign so the printed page matches the screen.
+    struct PrintSegAlign { int xOffset = 0; double spaceStretch = 0.0; };
+
+    PrintSegAlign ComputePrintSegAlign(int contentW, int trimmedW, int usableW,
+                                       ParagraphAlign a, bool isLastSeg, int spaceCount)
+    {
+        PrintSegAlign out;
+        switch (a)
+        {
+            case ParagraphAlign::Left:
+                break;
+            case ParagraphAlign::Center:
+            {
+                int slack = usableW - trimmedW;
+                if (slack > 0) out.xOffset = slack / 2;
+                break;
+            }
+            case ParagraphAlign::Right:
+            {
+                int slack = usableW - trimmedW;
+                if (slack > 0) out.xOffset = slack;
+                break;
+            }
+            case ParagraphAlign::Justify:
+            {
+                int slack = usableW - contentW;
+                if (!isLastSeg && spaceCount > 0 && slack > 0)
+                    out.spaceStretch = static_cast<double>(slack) / spaceCount;
+                break;
+            }
+        }
+        return out;
+    }
+
+    // Measure a print segment [startCol,endCol): full advance width, width up
+    // to the last non-space glyph, and stretchable-space count.
+    void MeasurePrintSegment(const std::vector<PrintChar>& chars,
+                             int startCol, int endCol,
+                             int& contentW, int& trimmedW, int& spaceCount)
+    {
+        int cum = 0, lastNonSpaceEnd = 0, spaces = 0;
+        for (int c = startCol; c < endCol; ++c)
+        {
+            cum += chars[c].advance;
+            if (chars[c].ch == ' ' || chars[c].ch == '\t') ++spaces;
+            else                                            lastNonSpaceEnd = cum;
+        }
+        contentW   = cum;
+        trimmedW   = lastNonSpaceEnd;
+        spaceCount = spaces;
+    }
 }
 
 std::vector<std::string> EnumeratePrinters()
@@ -811,11 +864,46 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
 
         const auto& seg = segments[ps.li][ps.s];
         const auto& lineChars = chars[ps.li];
-        int x = usableLeft;
         int y = usableTop + ps.yInPage;
+
+        // Paragraph alignment: shift the segment (Center/Right) and/or widen
+        // its spaces (Justify), mirroring WysiwygRenderer so print matches
+        // the on-screen layout.
+        ParagraphAlign align = ParagraphAlign::Left;
+        if (req.alignment && ps.li < static_cast<int>(req.alignment->size()))
+            align = static_cast<ParagraphAlign>((*req.alignment)[ps.li]);
+        int segContentW = 0, segTrimmedW = 0, segSpaces = 0;
+        MeasurePrintSegment(lineChars, seg.startCol, seg.endCol,
+                            segContentW, segTrimmedW, segSpaces);
+        PrintSegAlign sa = ComputePrintSegAlign(
+            segContentW, segTrimmedW, usableWidth, align,
+            ps.s + 1 == static_cast<int>(segments[ps.li].size()), segSpaces);
+        const int baseX = usableLeft + sa.xOffset;
+
+        // Per-column x offset from the segment's left edge (justify stretch
+        // baked in after each space). Size = (endCol - startCol + 1).
+        std::vector<int> xArr(static_cast<size_t>(seg.endCol - seg.startCol + 1));
+        {
+            double cum = 0.0;
+            for (int c = seg.startCol; c <= seg.endCol; ++c)
+            {
+                xArr[static_cast<size_t>(c - seg.startCol)] =
+                    static_cast<int>(cum + 0.5);
+                if (c < seg.endCol)
+                {
+                    cum += lineChars[c].advance;
+                    if (sa.spaceStretch > 0.0
+                        && (lineChars[c].ch == ' ' || lineChars[c].ch == '\t'))
+                        cum += sa.spaceStretch;
+                }
+            }
+        }
+        auto colX = [&](int col) { return baseX + xArr[static_cast<size_t>(col - seg.startCol)]; };
+
         // Group consecutive chars by (font, color, highlight) so we make
-        // one SelectObject / SetTextColor / FillRect+TextOutA call per
-        // run. Highlight rect is painted underneath each run when set.
+        // one SelectObject / SetTextColor / FillRect + ExtTextOut call per
+        // run. ExtTextOut with an explicit dx array reproduces the justify
+        // space-stretch within a run. Highlight rect goes underneath.
         int groupStart = seg.startCol;
         while (groupStart < seg.endCol)
         {
@@ -832,17 +920,15 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
                        || lineChars[groupEnd].highlight == groupHlColor))
                 ++groupEnd;
 
-            // Width of the run for the highlight rect.
-            int groupWidth = 0;
-            for (int c = groupStart; c < groupEnd; ++c)
-                groupWidth += lineChars[c].advance;
+            int runLeft  = colX(groupStart);
+            int runRight = colX(groupEnd);
 
-            if (groupHasHl && groupWidth > 0)
+            if (groupHasHl && runRight > runLeft)
             {
                 HBRUSH brush = CreateSolidBrush(groupHlColor);
                 if (brush)
                 {
-                    RECT bg{ x, y, x + groupWidth,
+                    RECT bg{ runLeft, y, runRight,
                              y + lineChars[groupStart].lineHeight };
                     FillRect(hdc, &bg, brush);
                     DeleteObject(brush);
@@ -851,15 +937,21 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
 
             SelectObject(hdc, groupFont);
             SetTextColor(hdc, groupColor);
-            std::string text;
+            std::string  text;
+            std::vector<INT> dx;
             text.reserve(static_cast<size_t>(groupEnd - groupStart));
+            dx.reserve(static_cast<size_t>(groupEnd - groupStart));
             for (int c = groupStart; c < groupEnd; ++c)
+            {
                 text.push_back(lineChars[c].ch);
-            // Transparent background so TextOutA doesn't over-paint the
+                dx.push_back(xArr[static_cast<size_t>(c + 1 - seg.startCol)]
+                           - xArr[static_cast<size_t>(c - seg.startCol)]);
+            }
+            // Transparent background so ExtTextOut doesn't over-paint the
             // highlight rect we just laid down.
             SetBkMode(hdc, TRANSPARENT);
-            TextOutA(hdc, x, y, text.c_str(), static_cast<int>(text.size()));
-            x += groupWidth;
+            ExtTextOutA(hdc, runLeft, y, 0, nullptr,
+                        text.c_str(), static_cast<UINT>(text.size()), dx.data());
             groupStart = groupEnd;
         }
     }

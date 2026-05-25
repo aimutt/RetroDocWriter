@@ -226,6 +226,11 @@ private:
     void ToggleStrikethrough();
     void ApplyStyleAction(uint8_t bit);
 
+    // Per-paragraph alignment (Format menu / Ctrl+L/E/R/J). Applies to every
+    // paragraph touched by the selection, or the cursor's paragraph when
+    // there's no selection. Recorded as one undo step.
+    void SetParagraphAlignment(ParagraphAlign a);
+
     // Margins dialog
     void OpenMarginsDialog();
     void CloseMarginsDialog(bool commit);

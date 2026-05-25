@@ -54,6 +54,50 @@ namespace
         if (f.color >= Palette::kCount)     return themeNormal;
         return Palette::ColorAt(f.color);
     }
+
+    // Per-segment horizontal-alignment geometry. Shared by Draw, HitTest, and
+    // ComputeVisualLayout so the painted glyphs, the click→column map, and
+    // arrow-key navigation all agree.
+    //   xOffset      pixels to shift the whole segment right (Center/Right)
+    //   spaceStretch extra width added after each space char (Justify only)
+    struct SegAlign { int xOffset = 0; double spaceStretch = 0.0; };
+
+    // contentW   = full advance width of the segment's glyphs
+    // trimmedW   = width up to the last non-space glyph (Center/Right ignore
+    //              trailing whitespace so the visible text centers)
+    // spaceCount = number of stretchable space glyphs in the segment
+    // isLastSeg  = true for a paragraph's final visual segment (Justify leaves
+    //              the last line flush-left, matching word processors)
+    inline SegAlign ComputeSegAlign(double contentW, double trimmedW, int usableW,
+                                    ParagraphAlign a, bool isLastSeg, int spaceCount)
+    {
+        SegAlign out;
+        switch (a)
+        {
+            case ParagraphAlign::Left:
+                break;
+            case ParagraphAlign::Center:
+            {
+                double slack = usableW - trimmedW;
+                if (slack > 0) out.xOffset = static_cast<int>(slack / 2.0 + 0.5);
+                break;
+            }
+            case ParagraphAlign::Right:
+            {
+                double slack = usableW - trimmedW;
+                if (slack > 0) out.xOffset = static_cast<int>(slack + 0.5);
+                break;
+            }
+            case ParagraphAlign::Justify:
+            {
+                double slack = usableW - contentW;
+                if (!isLastSeg && spaceCount > 0 && slack > 0.0)
+                    out.spaceStretch = slack / spaceCount;
+                break;
+            }
+        }
+        return out;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +230,27 @@ namespace
         }
         emit(n);
         return out;
+    }
+
+    // Measure a wrapped segment [segLo, segHi) for alignment: full sub-pixel
+    // content width, the width up to the last non-space glyph (for Center/
+    // Right trimming), and the count of stretchable space glyphs (Justify).
+    inline void MeasureSegment(const std::vector<CharRender>& chars,
+                               int segLo, int segHi,
+                               double& contentW, double& trimmedW, int& spaceCount)
+    {
+        double cum = 0.0;
+        double lastNonSpaceEnd = 0.0;
+        int    spaces = 0;
+        for (int c = segLo; c < segHi; ++c)
+        {
+            cum += chars[c].advanceSubpx;
+            if (chars[c].ch == ' ' || chars[c].ch == '\t') ++spaces;
+            else                                            lastNonSpaceEnd = cum;
+        }
+        contentW   = cum;
+        trimmedW   = lastNonSpaceEnd;
+        spaceCount = spaces;
     }
 }
 
@@ -411,13 +476,28 @@ WysiwygRenderer::ComputeVisualLayout(const DrawContext& ctx)
     {
         const auto& chars = pass.chars[li];
         const auto& segs  = pass.segments[li];
-        for (const auto& seg : segs)
+        ParagraphAlign align = ctx.formatted ? ctx.formatted->Alignment(li)
+                                             : ParagraphAlign::Left;
+        for (size_t s = 0; s < segs.size(); ++s)
         {
+            const auto& seg = segs[s];
             VisualLine vl;
             vl.bufferRow = li;
             vl.startCol  = seg.startCol;
             vl.endCol    = seg.endCol;
             vl.charXs.reserve(static_cast<size_t>(seg.endCol - seg.startCol + 1));
+
+            // charXs are segment-relative, so the Center/Right offset shifts
+            // every entry equally and cancels in column-matching navigation —
+            // only the Justify space-stretch changes intra-segment spacing, so
+            // bake just that in to keep Up/Down accurate on justified lines.
+            double segContentW = 0.0, segTrimmedW = 0.0;
+            int    segSpaces = 0;
+            MeasureSegment(chars, seg.startCol, seg.endCol,
+                           segContentW, segTrimmedW, segSpaces);
+            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, usableW, align,
+                                          s + 1 == segs.size(), segSpaces);
+
             // Sub-pixel accumulator rounded to int — matches the draw
             // loop's glyph positions, so cursor-arrow navigation lands
             // exactly under the rendered chars.
@@ -426,6 +506,9 @@ WysiwygRenderer::ComputeVisualLayout(const DrawContext& ctx)
             for (int c = seg.startCol; c < seg.endCol; ++c)
             {
                 cum += chars[c].advanceSubpx;
+                if (sa.spaceStretch > 0.0
+                    && (chars[c].ch == ' ' || chars[c].ch == '\t'))
+                    cum += sa.spaceStretch;
                 vl.charXs.push_back(static_cast<int>(cum + 0.5));
             }
             out.push_back(std::move(vl));
@@ -622,17 +705,21 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
     const int usableX  = pageX + mLeft;
 
     // Maps a click x to a source column within [segLo, segHi] using the same
-    // sub-pixel prefix-sum the draw loop builds. Returns the column boundary
-    // nearest the click (segHi == caret at end-of-segment).
+    // sub-pixel prefix-sum the draw loop builds (including the per-segment
+    // alignment offset baked into segUsableX and the Justify space-stretch).
+    // Returns the column boundary nearest the click (segHi == end-of-segment).
     auto columnForX = [&](const std::vector<CharRender>& chars,
-                          int segLo, int segHi, int clickX) -> int {
-        int rel = clickX - usableX;
+                          int segLo, int segHi, int clickX,
+                          int segUsableX, double spaceStretch) -> int {
+        int rel = clickX - segUsableX;
         if (rel <= 0) return segLo;
         double cum = 0.0;
         for (int c = segLo; c < segHi; ++c)
         {
             int x0 = static_cast<int>(cum + 0.5);
             double cumNext = cum + chars[c].advanceSubpx;
+            if (spaceStretch > 0.0 && (chars[c].ch == ' ' || chars[c].ch == '\t'))
+                cumNext += spaceStretch;
             int x1 = static_cast<int>(cumNext + 0.5);
             if (rel < (x0 + x1) / 2) return c;
             cum = cumNext;
@@ -654,8 +741,11 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
         }
         const auto& chars = pass.chars[li];
         const auto& segs  = pass.segments[li];
-        for (const auto& seg : segs)
+        ParagraphAlign align = ctx.formatted ? ctx.formatted->Alignment(li)
+                                             : ParagraphAlign::Left;
+        for (size_t s = 0; s < segs.size(); ++s)
         {
+            const auto& seg = segs[s];
             int h = seg.height;
             if (yInPage + h > usableH)
             {
@@ -664,6 +754,13 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
             }
             int textY = ctx.editorAreaPxY - viewport + curPage * pageStride
                       + mTop + yInPage;
+
+            double segContentW = 0.0, segTrimmedW = 0.0;
+            int    segSpaces = 0;
+            MeasureSegment(chars, seg.startCol, seg.endCol,
+                           segContentW, segTrimmedW, segSpaces);
+            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, usableW, align,
+                                          s + 1 == segs.size(), segSpaces);
 
             if (!any)
             {
@@ -677,7 +774,8 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
                 // Segments increase in screen Y, so the last one whose top is
                 // at/above the click is the line the user landed on (or below).
                 bestRow = li;
-                bestCol = columnForX(chars, seg.startCol, seg.endCol, px);
+                bestCol = columnForX(chars, seg.startCol, seg.endCol, px,
+                                     usableX + sa.xOffset, sa.spaceStretch);
             }
             yInPage += h;
         }
@@ -841,6 +939,18 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             int segLo = segs[s].startCol;
             int segHi = segs[s].endCol;
 
+            // Paragraph alignment: shift the segment (Center/Right) and/or
+            // widen its spaces (Justify). Same math the hit-test and arrow
+            // navigation use, so they all agree with what's painted.
+            ParagraphAlign align = ctx.formatted ? ctx.formatted->Alignment(li)
+                                                  : ParagraphAlign::Left;
+            double segContentW = 0.0, segTrimmedW = 0.0;
+            int    segSpaces   = 0;
+            MeasureSegment(chars, segLo, segHi, segContentW, segTrimmedW, segSpaces);
+            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, usableW, align,
+                                          s + 1 == segs.size(), segSpaces);
+            usableX += sa.xOffset;
+
             // Sub-pixel positioning: accumulate each character's sub-pixel
             // advance as a double, then round to the nearest integer pixel
             // when emitting a glyph. This makes the cumulative line width
@@ -850,6 +960,7 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             // segment's left edge) at column c. Size = (segHi - segLo + 1):
             // the trailing entry is the x just past the last glyph,
             // i.e. the cursor position when the cursor sits at end-of-seg.
+            // For Justify, sa.spaceStretch widens the gap after each space.
             std::vector<int> xOfCol(static_cast<size_t>(segHi - segLo + 1));
             {
                 double cum = 0.0;
@@ -857,7 +968,13 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
                 {
                     xOfCol[static_cast<size_t>(c - segLo)] =
                         static_cast<int>(cum + 0.5);
-                    if (c < segHi) cum += chars[c].advanceSubpx;
+                    if (c < segHi)
+                    {
+                        cum += chars[c].advanceSubpx;
+                        if (sa.spaceStretch > 0.0
+                            && (chars[c].ch == ' ' || chars[c].ch == '\t'))
+                            cum += sa.spaceStretch;
+                    }
                 }
             }
             auto xAt = [&](int col) -> int {
@@ -961,7 +1078,11 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
                 bool atEndOfBufferLine =
                     ctx.cursorCol == static_cast<int>(chars.size());
                 bool isLastSegment = (s + 1 == segs.size());
-                if (atEndOfBufferLine && isLastSegment)
+                // Only meaningful for left-aligned paragraphs — for Center/
+                // Right/Justify the segment is offset, so usableX + usableW
+                // is not the live right margin and the snap would misfire.
+                if (atEndOfBufferLine && isLastSegment
+                    && align == ParagraphAlign::Left)
                 {
                     double advNext = (segHi > segLo)
                         ? chars[segHi - 1].advanceSubpx

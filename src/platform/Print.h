@@ -48,6 +48,12 @@ struct PrintRequest
     // When set on row N, the print path advances to a new page before
     // emitting that row's first segment. Null = no forced page breaks.
     const std::vector<bool>* pageBreakBefore = nullptr;
+
+    // Optional per-row paragraph alignment (ParagraphAlign as uint8_t)
+    // parallel to `buffer`. The formatted print path offsets / justifies
+    // each visual segment to match the on-screen WYSIWYG layout. Null =
+    // every paragraph left-aligned.
+    const std::vector<uint8_t>* alignment = nullptr;
 };
 
 // Returns the installed printers. First entry is the system default (or the

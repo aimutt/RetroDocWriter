@@ -80,11 +80,18 @@ namespace
         bool pendingPageBreak = false;
         std::vector<bool> pageBreakBefore;   // mirrors lines
 
+        // Paragraph alignment. \ql/\qc/\qr/\qj set curAlignment; \pard resets
+        // it to Left. Alignment is sticky in RTF, so a new paragraph inherits
+        // the current value until reset. lineAlignment mirrors `lines`.
+        uint8_t curAlignment = static_cast<uint8_t>(ParagraphAlign::Left);
+        std::vector<uint8_t> lineAlignment;
+
         Parser(const std::string& s, FormattedTextBuffer& o) : src(s), out(o)
         {
             lines.emplace_back();
             formatRows.emplace_back();
             pageBreakBefore.push_back(false);
+            lineAlignment.push_back(static_cast<uint8_t>(ParagraphAlign::Left));
         }
 
         bool skipping() const { return skipFromDepth > 0; }
@@ -141,6 +148,8 @@ namespace
                 formatRows.emplace_back();
                 pageBreakBefore.push_back(pendingPageBreak);
                 pendingPageBreak = false;
+                // New paragraph inherits the current (sticky) alignment.
+                lineAlignment.push_back(curAlignment);
             }
             else if (b == '\r' || b == 0)
             {
@@ -252,6 +261,21 @@ namespace
             if (word == "strike") { setBit(CharStyle::Strikethrough, !(hasParam && param == 0)); return; }
             if (word == "ul")     { setBit(CharStyle::Underline,     !(hasParam && param == 0)); return; }
             if (word == "ulnone") { setBit(CharStyle::Underline, false); return; }
+
+            // Paragraph alignment. Applies to the current (in-progress) line;
+            // sticky for following paragraphs until \pard resets it to Left.
+            auto setAlign = [&](ParagraphAlign a) {
+                if (skipping()) return;
+                curAlignment = static_cast<uint8_t>(a);
+                if (!lineAlignment.empty()) lineAlignment.back() = curAlignment;
+            };
+            if (word == "ql")   { setAlign(ParagraphAlign::Left);    return; }
+            if (word == "qc")   { setAlign(ParagraphAlign::Center);  return; }
+            if (word == "qr")   { setAlign(ParagraphAlign::Right);   return; }
+            if (word == "qj")   { setAlign(ParagraphAlign::Justify); return; }
+            // \pard resets paragraph properties to their defaults (alignment
+            // back to Left). Character props are unaffected (that's \plain).
+            if (word == "pard") { setAlign(ParagraphAlign::Left);    return; }
 
             if (word == "deff" && hasParam)
             {
@@ -507,11 +531,14 @@ namespace
                 lines.pop_back();
                 formatRows.pop_back();
                 if (!pageBreakBefore.empty()) pageBreakBefore.pop_back();
+                if (!lineAlignment.empty()) lineAlignment.pop_back();
             }
-            // Make pageBreakBefore exactly line-count sized.
+            // Make pageBreakBefore + lineAlignment exactly line-count sized.
             pageBreakBefore.resize(lines.size(), false);
+            lineAlignment.resize(lines.size(),
+                                 static_cast<uint8_t>(ParagraphAlign::Left));
             out.SetLines(std::move(lines), std::move(formatRows),
-                         std::move(pageBreakBefore));
+                         std::move(pageBreakBefore), std::move(lineAlignment));
         }
     };
 }

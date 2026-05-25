@@ -141,8 +141,25 @@ std::string Write(const FormattedTextBuffer& buf,
     int     curHalfPt  = pointSize * 2;
     int     curColorRtf = 0;         // 0 = auto, 1..16 = palette index + 1
     int     curHighlightRtf = 0;     // 0 = auto/no-highlight, 1..16 = palette + 1
+    // Paragraph alignment is sticky in RTF, so emit the control word only
+    // when it changes from one paragraph to the next. Default is \ql (left).
+    ParagraphAlign curAlign = ParagraphAlign::Left;
     for (int row = 0; row < buf.LineCount(); ++row)
     {
+        // Emit the paragraph alignment at the start of the row's text (before
+        // the first char), so the \par that ends this row applies it.
+        ParagraphAlign wantAlign = buf.Alignment(row);
+        if (wantAlign != curAlign)
+        {
+            switch (wantAlign)
+            {
+                case ParagraphAlign::Left:    out += "\\ql "; break;
+                case ParagraphAlign::Center:  out += "\\qc "; break;
+                case ParagraphAlign::Right:   out += "\\qr "; break;
+                case ParagraphAlign::Justify: out += "\\qj "; break;
+            }
+            curAlign = wantAlign;
+        }
         const std::string& line = buf.Line(row);
         for (size_t c = 0; c < line.size(); ++c)
         {

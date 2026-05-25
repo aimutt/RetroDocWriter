@@ -16,6 +16,7 @@ struct RichUndoState
     std::vector<std::string>                  lines;
     std::vector<std::vector<CharFormat>>      formats;
     std::vector<bool>                         pageBreaks;
+    std::vector<uint8_t>                      alignment;   // ParagraphAlign per row
     int cursorRow = 0;
     int cursorCol = 0;
 };

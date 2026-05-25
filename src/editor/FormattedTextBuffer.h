@@ -40,6 +40,12 @@ public:
     bool               PageBreakBefore(int row)     const;
     void               SetPageBreakBefore(int row, bool on);
     const std::vector<bool>& PageBreaks()           const { return m_pageBreakBefore; }
+    // Per-row (per-paragraph) horizontal alignment. Default Left. Read by the
+    // WYSIWYG renderer + Print.cpp to offset/justify each visual segment, and
+    // round-tripped through RTF (\ql/\qc/\qr/\qj) by RtfReader/RtfWriter.
+    ParagraphAlign     Alignment(int row)           const;
+    void               SetAlignment(int row, ParagraphAlign a);
+    const std::vector<uint8_t>& Alignments()        const { return m_alignment; }
     // True if any character carries a non-default style/face/size, or any
     // row carries a page-break-before flag.
     bool               HasAnyFormatting()            const;
@@ -55,6 +61,14 @@ public:
     void SetLines(std::vector<std::string> lines,
                   std::vector<std::vector<CharFormat>> formats,
                   std::vector<bool> pageBreakBefore);
+    // Overload that also restores the per-row alignment vector. Used by the
+    // RTF reader and undo/redo to round-trip \ql/\qc/\qr/\qj. Each alignment
+    // entry is a ParagraphAlign cast to uint8_t; an empty/short vector pads
+    // with Left.
+    void SetLines(std::vector<std::string> lines,
+                  std::vector<std::vector<CharFormat>> formats,
+                  std::vector<bool> pageBreakBefore,
+                  std::vector<uint8_t> alignment);
     // Convenience: replace text and reset every character's format to
     // default (style=0, face=Inherit, size=Inherit).
     void SetLinesPlain(std::vector<std::string> lines);
@@ -112,4 +126,7 @@ private:
     TextBuffer                              m_text;
     std::vector<std::vector<CharFormat>>    m_formats;
     std::vector<bool>                       m_pageBreakBefore;
+    // Parallel to m_pageBreakBefore: one ParagraphAlign (as uint8_t) per row.
+    // Kept line-count-aligned in every mutator alongside m_pageBreakBefore.
+    std::vector<uint8_t>                    m_alignment;
 };
