@@ -1442,7 +1442,9 @@ void Application::HandleMouseDown(int cellCol, int cellRow, int px, int py, Uint
             m_activeMenu, cellCol, cellRow, m_screenColumns,
             m_wordWrap, m_showWordCount,
             m_spellCheckEnabled, m_highlightMisspelled,
-            m_showMargins, m_showHeaderFooter);
+            m_showMargins,
+            m_headerShowFilename, m_headerShowPageNumber,
+            m_footerShowFilename, m_footerShowPageNumber);
         if (item >= 0)
         {
             // ExecuteMenuItem already filters separators (empty label).
@@ -1666,7 +1668,9 @@ void Application::HandleMouseMotion(int cellCol, int cellRow, int px, int py)
             m_activeMenu, cellCol, cellRow, m_screenColumns,
             m_wordWrap, m_showWordCount,
             m_spellCheckEnabled, m_highlightMisspelled,
-            m_showMargins, m_showHeaderFooter);
+            m_showMargins,
+            m_headerShowFilename, m_headerShowPageNumber,
+            m_footerShowFilename, m_footerShowPageNumber);
         if (item >= 0 && item != m_activeItem)
         {
             // Skip separators — keep the previous highlighted item.
@@ -2212,7 +2216,9 @@ void Application::NewFile()
     m_selection.Clear();
     m_undoHistory.ClearAll();
     m_lastActionWasInsert = false;
-    m_showHeaderFooter = false;  // per-doc setting; a fresh doc starts off
+    // Per-doc header/footer slots all start off on a fresh document.
+    m_headerShowFilename = m_headerShowPageNumber = false;
+    m_footerShowFilename = m_footerShowPageNumber = false;
     m_statusMessage = "New file";
     UpdateWindowTitle();
 }
@@ -2507,8 +2513,11 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
         case 5: // Page
             switch (itemIdx)
             {
-                case 0: OpenMarginsDialog();      break; // Margins...
-                case 1: ToggleShowHeaderFooter(); break; // Header/Footer
+                case 0: OpenMarginsDialog(); break; // Margins...
+                case 1: ToggleHeaderFooterField(m_headerShowFilename,   "Header file name");   break;
+                case 2: ToggleHeaderFooterField(m_headerShowPageNumber, "Header page number"); break;
+                case 3: ToggleHeaderFooterField(m_footerShowFilename,   "Footer file name");   break;
+                case 4: ToggleHeaderFooterField(m_footerShowPageNumber, "Footer page number"); break;
                 default: break;
             }
             break;
@@ -3018,11 +3027,10 @@ void Application::ToggleShowMargins()
     SaveGlobalSettings();
 }
 
-void Application::ToggleShowHeaderFooter()
+void Application::ToggleHeaderFooterField(bool& flag, const char* label)
 {
-    m_showHeaderFooter = !m_showHeaderFooter;
-    m_statusMessage = m_showHeaderFooter ? "Header/footer shown"
-                                         : "Header/footer hidden";
+    flag = !flag;
+    m_statusMessage = std::string(label) + (flag ? " shown" : " hidden");
     m_needsRedraw   = true;
     // Per-document setting — persist to the sidecar, not config.ini.
     WriteSidecarForCurrentDocument();
@@ -3259,7 +3267,10 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.formats         = &m_document->Buffer().Formats();
     m_printRequest.pageBreakBefore = &m_document->Buffer().PageBreaks();
     m_printRequest.alignment       = &m_document->Buffer().Alignments();
-    m_printRequest.showHeaderFooter = m_showHeaderFooter;
+    m_printRequest.headerShowFilename   = m_headerShowFilename;
+    m_printRequest.headerShowPageNumber = m_headerShowPageNumber;
+    m_printRequest.footerShowFilename   = m_footerShowFilename;
+    m_printRequest.footerShowPageNumber = m_footerShowPageNumber;
 
     m_promptMode    = PromptMode::None;
     m_statusMessage = "Printing...";
@@ -3520,7 +3531,10 @@ void Application::CaptureFileSettings(FileSettings& s) const
 {
     s.SetBool("word_wrap",         m_wordWrap);
     s.SetBool("show_word_count",   m_showWordCount);
-    s.SetBool("show_header_footer", m_showHeaderFooter);
+    s.SetBool("header_filename",    m_headerShowFilename);
+    s.SetBool("header_page_number", m_headerShowPageNumber);
+    s.SetBool("footer_filename",    m_footerShowFilename);
+    s.SetBool("footer_page_number", m_footerShowPageNumber);
     s.SetString("margin_top",    std::to_string(m_margins.topIn));
     s.SetString("margin_bottom", std::to_string(m_margins.bottomIn));
     s.SetString("margin_left",   std::to_string(m_margins.leftIn));
@@ -3533,10 +3547,16 @@ void Application::ApplyFileSettings(const FileSettings& s)
         SetWordWrap(s.GetBool("word_wrap"));
     if (s.Has("show_word_count"))
         m_showWordCount = s.GetBool("show_word_count");
-    // Per-document; explicit reset to off when the key is absent so the
-    // value never leaks from a previously-open document.
-    m_showHeaderFooter = s.Has("show_header_footer")
-                       ? s.GetBool("show_header_footer") : false;
+    // Per-document header/footer slots. Read each with an explicit else-false
+    // reset so a value never leaks from a previously-open document. Legacy
+    // migration: the old single `show_header_footer` key (= filename + page
+    // number in the footer) maps to both footer slots when the new keys are
+    // absent.
+    bool legacyFooter = s.Has("show_header_footer") && s.GetBool("show_header_footer");
+    m_headerShowFilename   = s.Has("header_filename")    ? s.GetBool("header_filename")    : false;
+    m_headerShowPageNumber = s.Has("header_page_number") ? s.GetBool("header_page_number") : false;
+    m_footerShowFilename   = s.Has("footer_filename")    ? s.GetBool("footer_filename")    : legacyFooter;
+    m_footerShowPageNumber = s.Has("footer_page_number") ? s.GetBool("footer_page_number") : legacyFooter;
     // Legacy `wysiwyg` sidecar key from before the product split is silently
     // ignored on read; RetroDocWriter is always WYSIWYG now.
     auto readDouble = [&](const char* key, double& out) {
@@ -3806,7 +3826,10 @@ void Application::Render()
 
     // WYSIWYG margins toggle (Options > Show Margins).
     uiState.showMargins         = m_showMargins;
-    uiState.showHeaderFooter    = m_showHeaderFooter;
+    uiState.headerShowFilename   = m_headerShowFilename;
+    uiState.headerShowPageNumber = m_headerShowPageNumber;
+    uiState.footerShowFilename   = m_footerShowFilename;
+    uiState.footerShowPageNumber = m_footerShowPageNumber;
 
     // Print dialog snapshot
     uiState.printDialogActive   = (m_promptMode == PromptMode::PrintDialog);
@@ -3946,9 +3969,12 @@ WysiwygRenderer::DrawContext Application::BuildWysiwygDrawContext() const
     // shrinks the cursor immediately, before the user types anything.
     ctx.insertFace      = ctx.face;
     ctx.insertPointSize = ctx.pointSize;
-    ctx.showMargins      = m_showMargins;
-    ctx.showHeaderFooter = m_showHeaderFooter;
-    ctx.documentName     = m_document ? m_document->DisplayName() : std::string();
+    ctx.showMargins           = m_showMargins;
+    ctx.headerShowFilename    = m_headerShowFilename;
+    ctx.headerShowPageNumber  = m_headerShowPageNumber;
+    ctx.footerShowFilename    = m_footerShowFilename;
+    ctx.footerShowPageNumber  = m_footerShowPageNumber;
+    ctx.documentName          = m_document ? m_document->DisplayName() : std::string();
     if (m_currentFace != CharFormat::Inherit
         && m_currentFace < static_cast<uint8_t>(FontFace::Count_))
         ctx.insertFace = static_cast<FontFace>(m_currentFace);

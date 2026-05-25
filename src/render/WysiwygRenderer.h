@@ -86,11 +86,15 @@ public:
         // don't set it explicitly.
         bool showMargins = true;
 
-        // When true, Draw paints the document name (lower-left) and
-        // "Page N of M" (lower-right) in each page's bottom margin — the same
-        // footer the print path emits, so the on-screen view is WYSIWYG.
-        // Default off. `documentName` is the basename shown at lower-left.
-        bool        showHeaderFooter = false;
+        // Four independent header/footer slots, matching the print path so the
+        // on-screen view is WYSIWYG. The file name draws left-aligned and the
+        // page number right-aligned within the top-margin header and/or the
+        // bottom-margin footer. All default off. `documentName` is the
+        // basename shown for the file-name slots.
+        bool        headerShowFilename   = false;
+        bool        headerShowPageNumber = false;
+        bool        footerShowFilename   = false;
+        bool        footerShowPageNumber = false;
         std::string documentName;
     };
 

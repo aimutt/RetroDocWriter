@@ -205,7 +205,9 @@ private:
     void ToggleSpellCheck();
     void ToggleHighlightMisspelled();
     void ToggleShowMargins();
-    void ToggleShowHeaderFooter();
+    // Flip one header/footer slot (filename/page-number × header/footer),
+    // update status, redraw, and persist to the per-document sidecar.
+    void ToggleHeaderFooterField(bool& flag, const char* label);
     void CheckJustCompletedWord();
     void SaveUserDictionary();
 
@@ -355,10 +357,15 @@ private:
     // the new toggle.
     bool         m_showMargins          = true;
 
-    // WYSIWYG + print: show the filename (lower-left) and "Page N of M"
-    // (lower-right) in each page's bottom margin. Per-document (`show_header_
-    // footer` in the sidecar); defaults off so nothing prints unless asked.
-    bool         m_showHeaderFooter     = false;
+    // WYSIWYG + print page chrome: four independent slots placing the file
+    // name (left) and page number (right) in the top-margin header and/or the
+    // bottom-margin footer. Per-document (sidecar keys header_filename /
+    // header_page_number / footer_filename / footer_page_number); all default
+    // off so nothing shows or prints unless asked.
+    bool         m_headerShowFilename   = false;
+    bool         m_headerShowPageNumber = false;
+    bool         m_footerShowFilename   = false;
+    bool         m_footerShowPageNumber = false;
 
     // Print dialog state — populated when OpenPrintDialog runs, persists
     // across invocations within the session so the user's last choices stick.
