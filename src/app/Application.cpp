@@ -2426,13 +2426,17 @@ int Application::NextSelectableItem(int menuIdx, int fromItem, int dir) const
 
 void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
 {
-    CloseMenu();
-
     const auto& menus = GetMenuDefs();
-    if (menuIdx < 0 || menuIdx >= static_cast<int>(menus.size())) return;
+    if (menuIdx < 0 || menuIdx >= static_cast<int>(menus.size())) { CloseMenu(); return; }
     const auto& items = menus[menuIdx].items;
-    if (itemIdx < 0 || itemIdx >= static_cast<int>(items.size())) return;
-    if (items[itemIdx].label.empty()) return; // separator
+    if (itemIdx < 0 || itemIdx >= static_cast<int>(items.size())) { CloseMenu(); return; }
+    if (items[itemIdx].label.empty()) return; // separator — no-op, leave menu open
+
+    // In-place On/Off toggles keep the dropdown open so the user can flip
+    // several items in one visit; every other item closes the menu first
+    // (dialog actions set their own prompt mode immediately after).
+    if (!IsToggleMenuItem(menuIdx, itemIdx))
+        CloseMenu();
 
     switch (menuIdx)
     {
