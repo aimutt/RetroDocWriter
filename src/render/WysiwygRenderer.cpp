@@ -586,6 +586,115 @@ int WysiwygRenderer::RowAtViewportTop(const DrawContext& ctx, int viewportTopPx)
 }
 
 // ---------------------------------------------------------------------------
+// HitTest — reverse of the Draw layout. Mirrors the geometry/pagination walk
+// of RowAtViewportTop + Draw's Pass B so a screen pixel maps to the (row,col)
+// directly under the glyph the user clicked.
+// ---------------------------------------------------------------------------
+
+bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
+                              int& outRow, int& outCol)
+{
+    if (!ctx.buffer || ctx.buffer->LineCount() == 0) return false;
+    const int dpi = std::max(48, ctx.screenDpi);
+
+    const int pageW    = static_cast<int>(kPaperWidthIn  * dpi);
+    const int pageH    = static_cast<int>(kPaperHeightIn * dpi);
+    const int mTop     = static_cast<int>(ctx.margins.topIn    * dpi);
+    const int mBottom  = static_cast<int>(ctx.margins.bottomIn * dpi);
+    const int mLeft    = static_cast<int>(ctx.margins.leftIn   * dpi);
+    const int mRight   = static_cast<int>(ctx.margins.rightIn  * dpi);
+    const int usableW  = std::max(1, pageW - mLeft - mRight);
+    const int usableH  = std::max(1, pageH - mTop  - mBottom);
+    const int pageStride = pageH + kPageGapPx;
+
+    LayoutPass pass;
+    BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
+                    ctx.face, ctx.pointSize, m_theme.normalText, usableW,
+                    [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
+                    [&](FontFace f, int p, unsigned int cp) {
+                        int px2 = std::max(1, (p * dpi + 36) / 72);
+                        return SubpxAdvance(f, px2, cp);
+                    });
+
+    int pageX = ctx.editorAreaPxX + (ctx.editorAreaPxW - pageW) / 2;
+    if (pageX < ctx.editorAreaPxX) pageX = ctx.editorAreaPxX;
+    const int viewport = ctx.viewportTopPx;
+    const int usableX  = pageX + mLeft;
+
+    // Maps a click x to a source column within [segLo, segHi] using the same
+    // sub-pixel prefix-sum the draw loop builds. Returns the column boundary
+    // nearest the click (segHi == caret at end-of-segment).
+    auto columnForX = [&](const std::vector<CharRender>& chars,
+                          int segLo, int segHi, int clickX) -> int {
+        int rel = clickX - usableX;
+        if (rel <= 0) return segLo;
+        double cum = 0.0;
+        for (int c = segLo; c < segHi; ++c)
+        {
+            int x0 = static_cast<int>(cum + 0.5);
+            double cumNext = cum + chars[c].advanceSubpx;
+            int x1 = static_cast<int>(cumNext + 0.5);
+            if (rel < (x0 + x1) / 2) return c;
+            cum = cumNext;
+        }
+        return segHi;
+    };
+
+    int curPage = 0;
+    int yInPage = 0;
+    int bestRow = 0, bestCol = 0;
+    bool any = false;   // recorded a fallback (first segment processed)
+
+    for (int li = 0; li < ctx.buffer->LineCount(); ++li)
+    {
+        if (li > 0 && ctx.formatted && ctx.formatted->PageBreakBefore(li))
+        {
+            ++curPage;
+            yInPage = 0;
+        }
+        const auto& chars = pass.chars[li];
+        const auto& segs  = pass.segments[li];
+        for (const auto& seg : segs)
+        {
+            int h = seg.height;
+            if (yInPage + h > usableH)
+            {
+                ++curPage;
+                yInPage = 0;
+            }
+            int textY = ctx.editorAreaPxY - viewport + curPage * pageStride
+                      + mTop + yInPage;
+
+            if (!any)
+            {
+                // Fallback for clicks above all text: first line, line start.
+                bestRow = li;
+                bestCol = seg.startCol;
+                any = true;
+            }
+            if (py >= textY)
+            {
+                // Segments increase in screen Y, so the last one whose top is
+                // at/above the click is the line the user landed on (or below).
+                bestRow = li;
+                bestCol = columnForX(chars, seg.startCol, seg.endCol, px);
+            }
+            yInPage += h;
+        }
+    }
+
+    // Snap off a UTF-8 continuation byte onto the codepoint's lead byte.
+    const std::string& line = ctx.buffer->Line(bestRow);
+    while (bestCol > 0 && bestCol < static_cast<int>(line.size())
+           && Utf8IsContinuationByte(static_cast<unsigned char>(line[bestCol])))
+        --bestCol;
+
+    outRow = bestRow;
+    outCol = bestCol;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Draw
 // ---------------------------------------------------------------------------
 
