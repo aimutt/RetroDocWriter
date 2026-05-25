@@ -102,3 +102,18 @@ inline const std::vector<MenuDef>& GetMenuDefs()
     };
     return s_menus;
 }
+
+// True for menu items that are in-place On/Off toggles (their dropdown
+// shortcut shows live "On"/"Off"). Activating one flips its state in place;
+// the dropdown stays open so the user can toggle several without reopening.
+// Keep in sync with RetroUi's LiveShortcut, which renders the On/Off label
+// for these same items.
+inline bool IsToggleMenuItem(int menuIdx, int itemIdx)
+{
+    // Page menu (idx 5): Header/Footer slots 1..4.
+    if (menuIdx == 5 && itemIdx >= 1 && itemIdx <= 4) return true;
+    // Options menu (idx 7): Word Wrap, Word Count, Spell Check,
+    // Highlight Misspelled, Show Margins (items 2..6).
+    if (menuIdx == 7 && itemIdx >= 2 && itemIdx <= 6) return true;
+    return false;
+}
