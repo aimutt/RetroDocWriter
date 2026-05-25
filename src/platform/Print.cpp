@@ -643,27 +643,34 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
     static std::vector<std::string> registered; // process-lifetime set
     {
         std::vector<bool> seen(FontFaceCount(), false);
-        auto registerFace = [&](FontFace face) {
-            int idx = static_cast<int>(face);
-            if (idx < 0 || idx >= FontFaceCount() || seen[idx]) return;
-            seen[idx] = true;
-            // TTF file paths are resolved by Application; PrintRequest
-            // only carries the default's file. For other faces we rely
-            // on AddFontResourceEx with the same asset directory layout.
-            // Application passes the default's path in req.fontFile; the
-            // file's directory is the assets/fonts dir, so we just need
-            // FontFaceFile(face) appended to that directory.
-            if (req.fontFile.empty()) return;
-            // Find "fonts/" in req.fontFile and take the dir prefix.
+        // TTF file paths are resolved by Application; PrintRequest only carries
+        // the default's file, but every bundled face lives in the same
+        // assets/fonts dir, so we rebuild sibling paths from that prefix.
+        std::string fontDir;
+        if (!req.fontFile.empty())
+        {
             auto p = req.fontFile.rfind("fonts");
-            if (p == std::string::npos) return;
-            std::string base = req.fontFile.substr(0, p);
-            std::string path = base + FontFaceFile(face);
+            if (p != std::string::npos) fontDir = req.fontFile.substr(0, p);
+        }
+        auto registerPath = [&](const char* file) {
+            if (fontDir.empty()) return;
+            std::string path = fontDir + file;
             if (std::find(registered.begin(), registered.end(), path) == registered.end())
             {
                 if (AddFontResourceExA(path.c_str(), FR_PRIVATE, 0) > 0)
                     registered.push_back(path);
             }
+        };
+        auto registerFace = [&](FontFace face) {
+            int idx = static_cast<int>(face);
+            if (idx < 0 || idx >= FontFaceCount() || seen[idx]) return;
+            seen[idx] = true;
+            // Register the regular TTF *and* its bold sibling: bold runs carry
+            // the Bold style bit (not a bold face), and GDI's faux-bold of a
+            // privately-registered regular face doesn't take, so a real bold
+            // member of the family must be present for CreateFont(FW_BOLD).
+            registerPath(FontFaceFile(face));
+            registerPath(FontFaceFile(FontFaceBoldVariant(face)));
         };
         registerFace(defaultFace);
         for (const auto& row : *req.formats)
