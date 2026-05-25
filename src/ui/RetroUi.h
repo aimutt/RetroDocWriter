@@ -93,6 +93,9 @@ struct EditorUiState
     // page. Defaults to true so the menu's "On/Off" indicator matches the
     // app's default-on behavior.
     bool showMargins         = true;
+    // Per-document: show filename + page number in each page's bottom margin
+    // (on screen and in print). Drives the Page > Header/Footer On/Off label.
+    bool showHeaderFooter    = false;
     struct MisspelledSpan { int row; int col; int len; };
     std::vector<MisspelledSpan> misspelledSpans;
 
@@ -147,7 +150,7 @@ public:
                             int screenColumns,
                             bool wordWrap, bool showWordCount,
                             bool spellCheckEnabled, bool highlightMisspelled,
-                            bool showMargins) const;
+                            bool showMargins, bool showHeaderFooter) const;
 
     // Dialog hit-testing.
     // Each dialog has its own geometry, so each gets a dedicated hit-tester

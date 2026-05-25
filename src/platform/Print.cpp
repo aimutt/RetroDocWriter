@@ -439,6 +439,7 @@ std::string PrintDocument(const TextBuffer& buffer, const PrintRequest& req)
     int  pagesEmitted = 0;
 
     auto emitFooter = [&](int pageNum) {
+        if (!req.showHeaderFooter) return;
         std::string left  = docName;
         std::string right = "Page " + std::to_string(pageNum) + " of " + std::to_string(totalPagesAll);
         TextOutA(hdc, usableLeft, footerY,
@@ -786,10 +787,12 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
         segments[li] = WrapLineByPixels(chars[li], usableWidth, defaultLineHeight);
 
     // Greedy pagination: count pages and pre-compute per-segment page+y.
+    // Text uses the full content height (margins already excluded); the
+    // optional footer lives in the bottom margin, so it never reduces the
+    // text area and screen/print pagination stay identical.
     struct PlacedSeg { int li; int s; int page; int yInPage; };
     std::vector<PlacedSeg> placed;
-    const int footerH = defaultLineHeight; // bottom row reserved for footer
-    const int usableForText = std::max(1, usableHeight - footerH);
+    const int usableForText = usableHeight;
     int curPage = 1;
     int yInPage = 0;
     for (int li = 0; li < buffer.LineCount(); ++li)
@@ -840,10 +843,15 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
     int activePage   = -1;
 
     auto emitFooter = [&](int pageNum) {
+        if (!req.showHeaderFooter) return;
         SelectObject(hdc, defaultFont);
         std::string left  = docName;
         std::string right = "Page " + std::to_string(pageNum) + " of " + std::to_string(totalPages);
-        const int footerY = usableTop + usableForText;
+        // Centre the footer in the bottom-margin band (below the text area),
+        // clamped to stay inside the device's printable height.
+        int footerY = usableBottom + std::max(0, (marginBottomPx - defaultLineHeight) / 2);
+        if (footerY > vertRes - defaultLineHeight)
+            footerY = std::max(usableBottom, vertRes - defaultLineHeight);
         TextOutA(hdc, usableLeft, footerY,
                  left.c_str(), static_cast<int>(left.size()));
         SIZE rs{};

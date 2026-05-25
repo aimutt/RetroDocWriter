@@ -72,7 +72,8 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "(coming soon)", "" },
         }},
         { "Page", 36, {
-            { "Margins...",  ""  },
+            { "Margins...",      ""  },
+            { "Header/Footer",   ""  },   // shortcut column shows On/Off at draw time
         }},
         { "Tools", 42, {
             { "Add to Dictionary...",      "" },

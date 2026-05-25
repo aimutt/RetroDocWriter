@@ -882,6 +882,29 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
     mutedMargin.b = static_cast<uint8_t>((m_theme.dimText.b + paper.b) / 2);
     mutedMargin.a = 255;
 
+    // Footer string helpers — render with the document's default cache (one
+    // glyph per codepoint, UTF-8 decoded). strWidth measures for right-align.
+    auto strWidth = [&](const std::string& s) -> int {
+        int w = 0; size_t i = 0;
+        while (i < s.size())
+        {
+            size_t next; char32_t cp = Utf8DecodeAt(s, i, next);
+            w += defaultCache->GlyphAdvance(cp, 0);
+            i = next;
+        }
+        return w;
+    };
+    auto drawStr = [&](int x, int y, const std::string& s, Color col) {
+        size_t i = 0;
+        while (i < s.size())
+        {
+            size_t next; char32_t cp = Utf8DecodeAt(s, i, next);
+            if (cp > U' ') defaultCache->DrawGlyphAt(cp, x, y, col, 0);
+            x += defaultCache->GlyphAdvance(cp, 0);
+            i = next;
+        }
+    };
+
     for (int p = 0; p < totalPages; ++p)
     {
         int pageTopY = ctx.editorAreaPxY - viewport + p * pageStride;
@@ -893,6 +916,22 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
         if (ctx.showMargins)
             StrokeRect(m_sdl, pageX + mLeft, pageTopY + mTop, usableW, usableH,
                        mutedMargin);
+
+        // Optional footer: filename lower-left, "Page N of M" lower-right,
+        // vertically centered in the bottom-margin band (so it never steals
+        // from the text area — pagination is unaffected). Mirrors Print.cpp.
+        if (ctx.showHeaderFooter)
+        {
+            int lineH   = defaultCache->LineHeight();
+            int bandTop = pageTopY + pageH - mBottom;
+            int footerY = bandTop + std::max(0, (mBottom - lineH) / 2);
+            if (!ctx.documentName.empty())
+                drawStr(pageX + mLeft, footerY, ctx.documentName, m_theme.dimText);
+            std::string pageStr = "Page " + std::to_string(p + 1)
+                                + " of "  + std::to_string(totalPages);
+            int rightX = pageX + pageW - mRight - strWidth(pageStr);
+            drawStr(rightX, footerY, pageStr, m_theme.dimText);
+        }
     }
 
     // Selection range, normalized.

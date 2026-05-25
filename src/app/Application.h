@@ -205,6 +205,7 @@ private:
     void ToggleSpellCheck();
     void ToggleHighlightMisspelled();
     void ToggleShowMargins();
+    void ToggleShowHeaderFooter();
     void CheckJustCompletedWord();
     void SaveUserDictionary();
 
@@ -353,6 +354,11 @@ private:
     // to true so existing users keep the current look on first launch with
     // the new toggle.
     bool         m_showMargins          = true;
+
+    // WYSIWYG + print: show the filename (lower-left) and "Page N of M"
+    // (lower-right) in each page's bottom margin. Per-document (`show_header_
+    // footer` in the sidecar); defaults off so nothing prints unless asked.
+    bool         m_showHeaderFooter     = false;
 
     // Print dialog state — populated when OpenPrintDialog runs, persists
     // across invocations within the session so the user's last choices stick.
