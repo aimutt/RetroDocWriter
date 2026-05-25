@@ -211,6 +211,8 @@ void Application::DispatchEvent(const SDL_Event& event)
             {
                 HandleMouseDown(static_cast<int>(event.button.x) / cw,
                                 static_cast<int>(event.button.y) / ch,
+                                static_cast<int>(event.button.x),
+                                static_cast<int>(event.button.y),
                                 event.button.button);
             }
             // m_needsRedraw is set inside HandleMouseDown only when state
@@ -225,6 +227,8 @@ void Application::DispatchEvent(const SDL_Event& event)
             {
                 HandleMouseUp(static_cast<int>(event.button.x) / cw,
                               static_cast<int>(event.button.y) / ch,
+                              static_cast<int>(event.button.x),
+                              static_cast<int>(event.button.y),
                               event.button.button);
             }
             break;
@@ -236,7 +240,8 @@ void Application::DispatchEvent(const SDL_Event& event)
             const bool needMotion =
                 m_promptMode == PromptMode::MenuBar
              || m_promptMode == PromptMode::MenuOpen
-             || m_scrollbarDragActive;
+             || m_scrollbarDragActive
+             || m_textSelectDragActive;
             if (needMotion)
             {
                 int cw = m_renderer ? m_renderer->CellWidth()  : 0;
@@ -244,7 +249,9 @@ void Application::DispatchEvent(const SDL_Event& event)
                 if (cw > 0 && ch > 0)
                 {
                     HandleMouseMotion(static_cast<int>(event.motion.x) / cw,
-                                      static_cast<int>(event.motion.y) / ch);
+                                      static_cast<int>(event.motion.y) / ch,
+                                      static_cast<int>(event.motion.x),
+                                      static_cast<int>(event.motion.y));
                 }
             }
             break;
@@ -1378,7 +1385,7 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
     return false; // no dialog active — caller falls through to menu handling
 }
 
-void Application::HandleMouseDown(int cellCol, int cellRow, Uint8 button)
+void Application::HandleMouseDown(int cellCol, int cellRow, int px, int py, Uint8 button)
 {
     if (button != SDL_BUTTON_LEFT) return;
 
@@ -1448,8 +1455,35 @@ void Application::HandleMouseDown(int cellCol, int cellRow, Uint8 button)
         const int scrollbarX = m_screenColumns - 1;
         const int scrollbarY = m_layout.ROW_EDITOR_FIRST;
         const int height     = m_layout.ROW_EDITOR_LAST - m_layout.ROW_EDITOR_FIRST + 1;
-        if (cellCol == scrollbarX
-            && cellRow >= scrollbarY && cellRow < scrollbarY + height)
+        const bool onScrollbar =
+            (cellCol == scrollbarX
+             && cellRow >= scrollbarY && cellRow < scrollbarY + height);
+        const bool inEditorBody =
+            (!onScrollbar
+             && cellRow >= scrollbarY && cellRow < scrollbarY + height
+             && cellCol < scrollbarX);
+        if (inEditorBody)
+        {
+            // Click in the document body → move the caret under the click and
+            // arm a drag so a subsequent motion extends the selection.
+            WysiwygRenderer::DrawContext ctx = BuildWysiwygDrawContext();
+            ctx.viewportTopPx = m_wysiwygScrollPx;
+            int row = 0, col = 0;
+            if (m_wysiwyg->HitTest(ctx, px, py, row, col))
+            {
+                m_cursor.row    = row;
+                m_cursor.column = col;
+                ClampCursorToLine();
+                m_selection.Activate(m_cursor.row, m_cursor.column);
+                m_textSelectDragActive = true;
+                m_lastActionWasInsert  = false;
+                m_cursor.visible       = true;
+                m_lastBlinkTime        = SDL_GetTicks();
+                m_needsRedraw          = true;
+            }
+            return;
+        }
+        if (onScrollbar)
         {
             const int totalDocPx = m_wysiwyg->LastTotalDocumentPx();
             int ch = m_renderer ? m_renderer->CellHeight() : 0;
@@ -1498,7 +1532,8 @@ void Application::HandleMouseDown(int cellCol, int cellRow, Uint8 button)
     }
 }
 
-void Application::HandleMouseUp(int /*cellCol*/, int /*cellRow*/, Uint8 button)
+void Application::HandleMouseUp(int /*cellCol*/, int /*cellRow*/,
+                               int /*px*/, int /*py*/, Uint8 button)
 {
     if (button != SDL_BUTTON_LEFT) return;
     if (m_scrollbarDragActive)
@@ -1506,10 +1541,46 @@ void Application::HandleMouseUp(int /*cellCol*/, int /*cellRow*/, Uint8 button)
         m_scrollbarDragActive = false;
         m_scrollbarDragOwner  = PromptMode::None;
     }
+    if (m_textSelectDragActive)
+    {
+        m_textSelectDragActive = false;
+        // A press with no drag leaves an empty range — drop it so a plain
+        // click doesn't carry an active (but invisible) selection.
+        if (m_selection.IsEmpty(m_cursor.row, m_cursor.column))
+            m_selection.Clear();
+    }
 }
 
-void Application::HandleMouseMotion(int cellCol, int cellRow)
+void Application::HandleMouseMotion(int cellCol, int cellRow, int px, int py)
 {
+    // Text-selection drag in the document body — extend the selection by
+    // moving the live cursor end to the glyph under the pointer (the anchor
+    // set on mousedown stays put).
+    if (m_textSelectDragActive)
+    {
+        if (m_promptMode != PromptMode::None || !m_wysiwyg)
+        {
+            m_textSelectDragActive = false;
+            return;
+        }
+        WysiwygRenderer::DrawContext ctx = BuildWysiwygDrawContext();
+        ctx.viewportTopPx = m_wysiwygScrollPx;
+        int row = 0, col = 0;
+        if (m_wysiwyg->HitTest(ctx, px, py, row, col))
+        {
+            if (row != m_cursor.row || col != m_cursor.column)
+            {
+                m_cursor.row    = row;
+                m_cursor.column = col;
+                ClampCursorToLine();
+                m_cursor.visible = true;
+                m_lastBlinkTime  = SDL_GetTicks();
+                m_needsRedraw    = true;
+            }
+        }
+        return;
+    }
+
     // Scrollbar thumb drag — recompute scrollTop from the current mouse row,
     // dispatched by which dialog initiated the drag.
     if (m_scrollbarDragActive)

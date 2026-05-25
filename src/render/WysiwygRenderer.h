@@ -137,6 +137,15 @@ public:
     // the scrollbar, the cursor jumps to the row this returns.
     int RowAtViewportTop(const DrawContext& ctx, int viewportTopPx);
 
+    // Reverse of the forward layout: maps a screen pixel (px,py) to a document
+    // (row,col), using the same pagination/wrap walk as Draw so the result
+    // lands exactly under the rendered glyphs. Returns false only when there is
+    // no buffer to hit. Clicks above/left of all text snap to the first line /
+    // column 0; clicks below/right snap to the last visual line / end-of-segment.
+    // The returned column is a byte index into the row's UTF-8 line, already
+    // snapped to a codepoint lead byte.
+    bool HitTest(const DrawContext& ctx, int px, int py, int& outRow, int& outCol);
+
 private:
     // Resolve and return the cache for a (face, pointSize) combo at the
     // current dpi, creating it on demand. Caches are kept in m_caches

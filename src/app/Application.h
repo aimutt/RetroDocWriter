@@ -83,9 +83,12 @@ private:
     void HandlePromptKeyDown(const SDL_KeyboardEvent& key);
     void HandleMenuKeyDown(const SDL_KeyboardEvent& key);
     void HandleTextInput(const char* text);
-    void HandleMouseDown(int cellCol, int cellRow, Uint8 button);
-    void HandleMouseUp  (int cellCol, int cellRow, Uint8 button);
-    void HandleMouseMotion(int cellCol, int cellRow);
+    // cellCol/cellRow drive the cell-grid chrome (menu bar, dropdowns,
+    // scrollbar); px/py are the raw pixel coords needed to hit-test the
+    // proportional WYSIWYG document body.
+    void HandleMouseDown(int cellCol, int cellRow, int px, int py, Uint8 button);
+    void HandleMouseUp  (int cellCol, int cellRow, int px, int py, Uint8 button);
+    void HandleMouseMotion(int cellCol, int cellRow, int px, int py);
     // Returns true if the click was consumed by an active dialog.
     bool HandleDialogMouseDown(int cellCol, int cellRow);
 
@@ -293,6 +296,9 @@ private:
     // HandleMouseMotion that writes the new scrollTop back.
     bool       m_scrollbarDragActive       = false;
     PromptMode m_scrollbarDragOwner        = PromptMode::None;
+    // Text-selection drag in the WYSIWYG body: armed on mousedown in the
+    // editor, extends the selection on motion, released on mouseup.
+    bool       m_textSelectDragActive      = false;
     int        m_scrollbarDragX            = 0;
     int        m_scrollbarDragY            = 0;
     int        m_scrollbarDragHeight       = 0;
