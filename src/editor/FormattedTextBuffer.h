@@ -56,6 +56,19 @@ public:
     const std::vector<FloatObject>& Floats()        const { return m_floats; }
     std::vector<FloatObject>&       FloatsMutable()       { return m_floats; }
     void               SetFloats(std::vector<FloatObject> floats) { m_floats = std::move(floats); }
+
+    // Whole-document multi-column layout (RTF \cols / \colsx). columnCount==1
+    // is the default single-column flow; gutter is the space between columns
+    // in twips. Document-level (not per row), set by the RTF reader / Columns
+    // dialog and read by the layout sweep.
+    int                ColumnCount()                const { return m_columnCount; }
+    int                ColumnGutterTwips()          const { return m_columnGutterTwips; }
+    void               SetColumns(int count, int gutterTwips)
+    {
+        m_columnCount       = (count < 1) ? 1 : (count > 12 ? 12 : count);
+        m_columnGutterTwips = (gutterTwips < 0) ? 0 : gutterTwips;
+    }
+
     // True if any character carries a non-default style/face/size, or any
     // row carries a page-break-before flag.
     bool               HasAnyFormatting()            const;
@@ -148,4 +161,7 @@ private:
     // Sparse list of floating objects keyed by anchorRow (not a per-row
     // parallel vector). Mutators adjust anchorRow on row insert/join/delete.
     std::vector<FloatObject>                m_floats;
+    // Document-level multi-column layout (\cols / \colsx).
+    int                                     m_columnCount       = 1;
+    int                                     m_columnGutterTwips = 720;  // 0.5"
 };

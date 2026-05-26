@@ -196,6 +196,16 @@ std::string Write(const FormattedTextBuffer& buf,
         toTwips(page.marginTopIn),    toTwips(page.marginBottomIn));
     out += pageBuf;
 
+    // Whole-document columns. Emitted at the section/document level (only when
+    // more than one) so external readers lay text out in the same columns.
+    if (buf.ColumnCount() > 1)
+    {
+        char colBuf[48];
+        std::snprintf(colBuf, sizeof(colBuf), "\\cols%d\\colsx%d\n",
+                      buf.ColumnCount(), buf.ColumnGutterTwips());
+        out += colBuf;
+    }
+
     char fsbuf[32];
     std::snprintf(fsbuf, sizeof(fsbuf), "\\fs%d\n", pointSize * 2);
     out += fsbuf;

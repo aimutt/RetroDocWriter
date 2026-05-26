@@ -86,6 +86,10 @@ namespace
         uint8_t curAlignment = static_cast<uint8_t>(ParagraphAlign::Left);
         std::vector<uint8_t> lineAlignment;
 
+        // Whole-document columns (\cols / \colsx). Last value seen wins.
+        int docCols       = 1;
+        int docColsGutter = 720;
+
         // Shape (\shp) parsing. While inShape, body emission is suppressed and
         // bytes route through handleShapeByte (pict hex / caption / discard).
         // Depths record the brace level of the {\shp}, {\pict}, {\shptxt} and
@@ -362,6 +366,10 @@ namespace
             if (word == "strike") { setBit(CharStyle::Strikethrough, !(hasParam && param == 0)); return; }
             if (word == "ul")     { setBit(CharStyle::Underline,     !(hasParam && param == 0)); return; }
             if (word == "ulnone") { setBit(CharStyle::Underline, false); return; }
+
+            // Whole-document multi-column layout.
+            if (word == "cols"  && hasParam) { docCols = param; return; }
+            if (word == "colsx" && hasParam) { docColsGutter = param; return; }
 
             // Paragraph alignment. Applies to the current (in-progress) line;
             // sticky for following paragraphs until \pard resets it to Left.
@@ -679,6 +687,7 @@ namespace
             out.SetLines(std::move(lines), std::move(formatRows),
                          std::move(pageBreakBefore), std::move(lineAlignment));
             out.SetFloats(std::move(floats));
+            out.SetColumns(docCols, docColsGutter);
         }
     };
 }

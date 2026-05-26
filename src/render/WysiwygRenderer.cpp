@@ -199,48 +199,53 @@ namespace
         spaceCount = spaces;
     }
 
-    // A float resolved into layout (page-content) coordinates: page index,
-    // vertical band [yTop,yBottom) measured from the content-area top (same
-    // space as a segment's yInPage), and horizontal span [xLeft,xRight)
-    // measured from the column's left edge (usableX). `reflow` is true only
-    // for wrap types that push text aside (1 square / 4 tight / 5 through).
+    // A float resolved into layout (page-content) coordinates. [yTop,yBottom)
+    // is the image/box DRAW rect; [xLeft,xRight) its horizontal span — both
+    // measured from the content top / usableX (so they already include the
+    // active column's x-base). `exclBottom` is yBottom plus any caption band,
+    // used for the text-reflow exclusion. `reflow` is true only for wrap types
+    // that push text aside (1 square / 4 tight / 5 through). `obj` points at
+    // the source FloatObject so the draw paths can read its image/box/caption.
     struct ResolvedFloat
     {
+        const FloatObject* obj = nullptr;
         int  page = 0;
         int  yTop = 0, yBottom = 0;
+        int  exclBottom = 0;
         int  xLeft = 0, xRight = 0;
         bool reflow = false;
     };
 
-    // Widest free horizontal run in [0,usableW] at vertical band [y,y+h) on
-    // `page`, after removing the spans of reflowing floats that overlap the
-    // band. With no overlap this returns the full column, so a float-free
+    // Widest free horizontal run within [colLeft,colRight] at vertical band
+    // [y,y+h) on `page`, after removing the spans of reflowing floats that
+    // overlap the band. With no overlap this returns the whole range, so a
+    // float-free
     // document wraps exactly as before.
     void FreeRun(const std::vector<ResolvedFloat>& floats, int page, int y, int h,
-                 int usableW, int& outL, int& outR)
+                 int colLeft, int colRight, int& outL, int& outR)
     {
-        outL = 0; outR = usableW;
-        // Collect blocked x-intervals.
+        outL = colLeft; outR = colRight;
+        // Collect blocked x-intervals (clamped to the column range).
         std::vector<std::pair<int,int>> blocked;
         for (const auto& f : floats)
         {
             if (!f.reflow || f.page != page) continue;
-            if (y >= f.yBottom || y + h <= f.yTop) continue;  // no vertical overlap
-            int bl = std::max(0, f.xLeft);
-            int br = std::min(usableW, f.xRight);
+            if (y >= f.exclBottom || y + h <= f.yTop) continue;  // no vertical overlap
+            int bl = std::max(colLeft, f.xLeft);
+            int br = std::min(colRight, f.xRight);
             if (br > bl) blocked.emplace_back(bl, br);
         }
         if (blocked.empty()) return;
         std::sort(blocked.begin(), blocked.end());
-        // Widest gap between blocked spans across [0, usableW].
-        int bestL = 0, bestW = 0, cursor = 0;
+        // Widest gap between blocked spans across [colLeft, colRight].
+        int bestL = colLeft, bestW = 0, cursor = colLeft;
         for (auto& b : blocked)
         {
             if (b.first - cursor > bestW) { bestW = b.first - cursor; bestL = cursor; }
             cursor = std::max(cursor, b.second);
         }
-        if (usableW - cursor > bestW) { bestW = usableW - cursor; bestL = cursor; }
-        if (bestW <= 0) return;            // fully blocked → fall back to full column
+        if (colRight - cursor > bestW) { bestW = colRight - cursor; bestL = cursor; }
+        if (bestW <= 0) return;            // fully blocked → fall back to whole column
         outL = bestL; outR = bestL + bestW;
     }
 
@@ -381,18 +386,21 @@ namespace
     {
         std::vector<std::vector<CharRender>>  chars;     // [line][col]
         std::vector<std::vector<LineSegment>> segments;  // [line][segIdx]
-        std::vector<ResolvedFloat>            floats;    // reflow exclusions, resolved during the sweep
+        std::vector<ResolvedFloat>            floats;    // resolved during the sweep (draw + exclusion)
         int defaultLineHeight = 16;
+        int totalPages        = 1;
     };
 
     // Geometry the placement sweep needs (all pixels except dpi).
     struct LayoutGeom
     {
-        int dpi      = 96;
-        int usableW  = 1;
-        int usableH  = 1;
-        int mTop     = 0;
-        int mLeft    = 0;
+        int dpi         = 96;
+        int usableW     = 1;   // full content width (all columns + gutters)
+        int usableH     = 1;
+        int mTop        = 0;
+        int mLeft       = 0;
+        int columnCount = 1;
+        int gutter      = 0;   // px between columns
     };
 }
 
@@ -408,7 +416,6 @@ static void BuildLayoutPass(LayoutPass& out,
                             const std::vector<WysiwygRenderer::MisspelledSpan>* misspells = nullptr,
                             Color misspelledColor = Color{})
 {
-    const int usableW = geom.usableW;
     int n = buf.LineCount();
     out.chars.clear();
     out.segments.clear();
@@ -485,42 +492,63 @@ static void BuildLayoutPass(LayoutPass& out,
     }
 
     // --- Placement sweep -------------------------------------------------
-    // Thread page/yInPage exactly the way every consumer re-paginates (greedy
-    // by segment height, honoring PageBreakBefore), so the placement stored
-    // here agrees with their walks. Floats are resolved when the sweep reaches
-    // their anchor row; reflowing floats (wrap 1/4/5) then narrow the
-    // available run for following lines. With no reflowing floats this
-    // reproduces the old per-line WrapLinePixels result exactly.
+    // Thread page / column / yInPage, flowing text down a column then to the
+    // next column and finally to the next page. Floats are resolved when the
+    // sweep reaches their anchor row (against the active column's x-base);
+    // reflowing floats (wrap 1/4/5) then narrow the available run for the
+    // following lines. With one column and no reflowing floats this reproduces
+    // the old single-column wrap/pagination exactly.
     auto tw2px = [&](int tw) { return (tw * geom.dpi) / 1440; };
+    const int nCols = std::max(1, geom.columnCount);
+    const int colW  = std::max(1, (geom.usableW - (nCols - 1) * geom.gutter) / nCols);
+    auto colLeftOf  = [&](int c) { return c * (colW + geom.gutter); };
+
     int curPage = 0;
+    int curCol  = 0;
     int yInPage = 0;
+    out.totalPages = 1;
+    // Advance to the next column (then next page) when the current one fills.
+    auto advanceColumnIfFull = [&](int h) {
+        if (yInPage + h > geom.usableH && yInPage > 0)
+        {
+            if (++curCol >= nCols) { curCol = 0; ++curPage; }
+            yInPage = 0;
+        }
+    };
+
     for (int li = 0; li < n; ++li)
     {
         if (li > 0 && fmt && fmt->PageBreakBefore(li))
         {
             ++curPage;
+            curCol  = 0;
             yInPage = 0;
         }
 
-        // Resolve floats anchored to this row into layout coordinates.
+        // Resolve floats anchored to this row into layout coordinates, against
+        // the active column for column-relative floats.
         if (floatObjs)
         {
+            const int activeColLeft = colLeftOf(curCol);
             for (const auto& f : *floatObjs)
             {
                 if (f.anchorRow != li) continue;
                 ResolvedFloat rf;
+                rf.obj  = &f;
                 rf.page = curPage;
                 int yOrigin = (f.vRef == FloatObject::VRef::Margin) ? 0
                             : (f.vRef == FloatObject::VRef::Page)   ? -geom.mTop
                             :  yInPage;                              // Paragraph
                 rf.yTop    = yOrigin + tw2px(f.top);
                 rf.yBottom = yOrigin + tw2px(f.bottom);
-                // An image caption is drawn just below the picture, so extend
-                // the exclusion to cover it — otherwise text could wrap onto
-                // the caption.
+                // Caption is drawn just below the picture; extend the reflow
+                // exclusion (not the draw box) so text never lands on it.
+                rf.exclBottom = rf.yBottom;
                 if (f.kind == FloatObject::Kind::Image && !f.caption.empty())
-                    rf.yBottom += out.defaultLineHeight + 2;
-                int xOrigin = (f.hRef == FloatObject::HRef::Page) ? -geom.mLeft : 0;
+                    rf.exclBottom += out.defaultLineHeight + 2;
+                int xOrigin = (f.hRef == FloatObject::HRef::Page)   ? -geom.mLeft
+                            : (f.hRef == FloatObject::HRef::Column)  ? activeColLeft
+                            :  0;                                    // Margin
                 rf.xLeft   = xOrigin + tw2px(f.left);
                 rf.xRight  = xOrigin + tw2px(f.right);
                 rf.reflow  = (f.wrapType == 1 || f.wrapType == 4 || f.wrapType == 5);
@@ -533,11 +561,12 @@ static void BuildLayoutPass(LayoutPass& out,
 
         if (nchars == 0)
         {
-            // Empty paragraph: one zero-length, full-width segment.
+            // Empty paragraph: one zero-length, full-column segment.
             int h = out.defaultLineHeight;
-            if (yInPage + h > geom.usableH && yInPage > 0) { ++curPage; yInPage = 0; }
-            out.segments[li].push_back({ 0, 0, h, curPage, yInPage, 0, usableW });
+            advanceColumnIfFull(h);
+            out.segments[li].push_back({ 0, 0, h, curPage, yInPage, colLeftOf(curCol), colW });
             yInPage += h;
+            out.totalPages = std::max(out.totalPages, curPage + 1);
             continue;
         }
 
@@ -547,10 +576,11 @@ static void BuildLayoutPass(LayoutPass& out,
             // Provisional height from the first char of the chunk drives the
             // exclusion band; segments are single-font in the common case.
             int provH = chars[col].lineHeight;
-            if (yInPage + provH > geom.usableH && yInPage > 0) { ++curPage; yInPage = 0; }
+            advanceColumnIfFull(provH);
 
+            int cl = colLeftOf(curCol);
             int xL, xR;
-            FreeRun(out.floats, curPage, yInPage, provH, usableW, xL, xR);
+            FreeRun(out.floats, curPage, yInPage, provH, cl, cl + colW, xL, xR);
             int availW = xR - xL;
 
             ChunkResult ck = WrapChunk(chars, col, static_cast<double>(availW),
@@ -558,6 +588,7 @@ static void BuildLayoutPass(LayoutPass& out,
             out.segments[li].push_back({ col, ck.endExcl, ck.height,
                                          curPage, yInPage, xL, availW });
             yInPage += ck.height;
+            out.totalPages = std::max(out.totalPages, curPage + 1);
             col = ck.nextCol;
         }
     }
@@ -584,7 +615,8 @@ WysiwygRenderer::ComputeVisualLayout(const DrawContext& ctx)
     const int usableH = std::max(1, pageH - mTop  - mBottom);
 
     LayoutPass pass;
-    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
     const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
                     ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
@@ -656,7 +688,8 @@ WysiwygRenderer::ComputePlacedSegments(const DrawContext& ctx)
     const int usableH = std::max(1, pageH - mTop  - mBottom);
 
     LayoutPass pass;
-    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
     const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
                     ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
@@ -689,7 +722,8 @@ int WysiwygRenderer::ClampScrollForCursor(const DrawContext& ctx)
     const int usableH  = std::max(1, pageH - mTop  - mBottom);
     const int pageStride = pageH + kPageGapPx;
 
-    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
     const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
                     ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
@@ -701,44 +735,24 @@ int WysiwygRenderer::ClampScrollForCursor(const DrawContext& ctx)
 
     int row = std::clamp(ctx.cursorRow, 0, std::max(0, ctx.buffer->LineCount() - 1));
 
-    // Walk visual lines in document order, accumulating Y inside each page.
-    int curPage    = 0;
-    int yInPage    = 0;
+    // Find the cursor's visual segment from the stored placement (handles
+    // columns + floats). The segment that contains the cursor column, or the
+    // row's last segment.
     int cursorY    = 0;
     int cursorPage = 0;
     int cursorH    = pass.defaultLineHeight;
-    bool found = false;
-
-    for (int li = 0; li < ctx.buffer->LineCount() && !found; ++li)
     {
-        // Forced page break (Ctrl+Enter / RTF \page) before this row.
-        if (li > 0 && ctx.formatted && ctx.formatted->PageBreakBefore(li))
-        {
-            ++curPage;
-            yInPage = 0;
-        }
-        const auto& segs = pass.segments[li];
+        const auto& segs = pass.segments[row];
         for (size_t s = 0; s < segs.size(); ++s)
         {
-            int h = segs[s].height;
-            if (yInPage + h > usableH)
+            bool isLast = (s + 1 == segs.size());
+            if (ctx.cursorCol <= segs[s].endCol || isLast)
             {
-                ++curPage;
-                yInPage = 0;
+                cursorPage = segs[s].page;
+                cursorY    = segs[s].yInPage;
+                cursorH    = segs[s].height;
+                break;
             }
-            if (li == row)
-            {
-                bool isLast = (s + 1 == segs.size());
-                if (ctx.cursorCol <= segs[s].endCol || isLast)
-                {
-                    cursorY    = yInPage;
-                    cursorPage = curPage;
-                    cursorH    = h;
-                    found = true;
-                    break;
-                }
-            }
-            yInPage += h;
         }
     }
 
@@ -786,7 +800,8 @@ int WysiwygRenderer::RowAtViewportTop(const DrawContext& ctx, int viewportTopPx)
     const int usableH  = std::max(1, pageH - mTop  - mBottom);
     const int pageStride = pageH + kPageGapPx;
 
-    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
     const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
                     ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
@@ -796,34 +811,17 @@ int WysiwygRenderer::RowAtViewportTop(const DrawContext& ctx, int viewportTopPx)
                         return SubpxAdvance(f, px, cp);
                     });
 
-    int curPage = 0;
-    int yInPage = 0;
     int lastRow = ctx.buffer->LineCount() - 1;
 
+    // A buffer row's "top" is the absolute Y of its first segment, read from
+    // the stored placement (correct across columns + floats).
     for (int li = 0; li <= lastRow; ++li)
     {
-        if (li > 0 && ctx.formatted && ctx.formatted->PageBreakBefore(li))
-        {
-            ++curPage;
-            yInPage = 0;
-        }
         const auto& segs = pass.segments[li];
-        // A buffer row's "top" is the Y of its first segment.
-        bool firstSegOnLine = true;
-        for (const auto& seg : segs)
-        {
-            int h = seg.height;
-            if (yInPage + h > usableH)
-            {
-                ++curPage;
-                yInPage = 0;
-            }
-            int absY = curPage * pageStride + mTop + yInPage;
-            if (firstSegOnLine && absY >= viewportTopPx)
-                return li;
-            firstSegOnLine = false;
-            yInPage += h;
-        }
+        if (segs.empty()) continue;
+        int absY = segs.front().page * pageStride + mTop + segs.front().yInPage;
+        if (absY >= viewportTopPx)
+            return li;
     }
     return lastRow;
 }
@@ -851,7 +849,8 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
     const int pageStride = pageH + kPageGapPx;
 
     LayoutPass pass;
-    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
     const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
                     ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
@@ -889,46 +888,51 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
         return segHi;
     };
 
-    int bestRow = 0, bestCol = 0;
-    bool any = false;   // recorded a fallback (first segment processed)
-
+    // Pick the segment closest to the click, with vertical distance dominating
+    // and horizontal as the tie-breaker — so a click inside a column lands on
+    // that column's line (column flow makes screen-Y non-monotonic, so the old
+    // "last segment above the click" rule no longer suffices).
+    int  bestLi = 0, bestS = 0;
+    bool any = false;
+    long long bestScore = 0;
     for (int li = 0; li < ctx.buffer->LineCount(); ++li)
     {
-        const auto& chars = pass.chars[li];
-        const auto& segs  = pass.segments[li];
-        ParagraphAlign align = ctx.formatted ? ctx.formatted->Alignment(li)
-                                             : ParagraphAlign::Left;
+        const auto& segs = pass.segments[li];
         for (size_t s = 0; s < segs.size(); ++s)
         {
             const auto& seg = segs[s];
-            // Placement comes straight from the layout sweep (page/yInPage),
-            // and the segment's float-determined run (xOffset/width).
             int textY = ctx.editorAreaPxY - viewport + seg.page * pageStride
                       + mTop + seg.yInPage;
-
-            double segContentW = 0.0, segTrimmedW = 0.0;
-            int    segSpaces = 0;
-            MeasureSegment(chars, seg.startCol, seg.endCol,
-                           segContentW, segTrimmedW, segSpaces);
-            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, seg.width, align,
-                                          s + 1 == segs.size(), segSpaces);
-
-            if (!any)
+            int segTop = textY, segBot = textY + seg.height;
+            int segL = usableX + seg.xOffset, segR = segL + seg.width;
+            long long dy = (py < segTop) ? (segTop - py)
+                         : (py >= segBot) ? (py - segBot) : 0;
+            long long dx = (px < segL) ? (segL - px)
+                         : (px > segR)  ? (px - segR) : 0;
+            long long score = dy * 100000LL + dx;
+            if (!any || score < bestScore)
             {
-                // Fallback for clicks above all text: first line, line start.
-                bestRow = li;
-                bestCol = seg.startCol;
+                bestScore = score; bestLi = li; bestS = static_cast<int>(s);
                 any = true;
             }
-            if (py >= textY)
-            {
-                // Segments increase in screen Y, so the last one whose top is
-                // at/above the click is the line the user landed on (or below).
-                bestRow = li;
-                bestCol = columnForX(chars, seg.startCol, seg.endCol, px,
-                                     usableX + seg.xOffset + sa.xOffset, sa.spaceStretch);
-            }
         }
+    }
+
+    int bestRow = bestLi, bestCol = 0;
+    if (any)
+    {
+        const auto& chars = pass.chars[bestLi];
+        const auto& segs  = pass.segments[bestLi];
+        const auto& seg   = segs[static_cast<size_t>(bestS)];
+        ParagraphAlign align = ctx.formatted ? ctx.formatted->Alignment(bestLi)
+                                             : ParagraphAlign::Left;
+        double segContentW = 0.0, segTrimmedW = 0.0;
+        int    segSpaces = 0;
+        MeasureSegment(chars, seg.startCol, seg.endCol, segContentW, segTrimmedW, segSpaces);
+        SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, seg.width, align,
+                                      static_cast<size_t>(bestS) + 1 == segs.size(), segSpaces);
+        bestCol = columnForX(chars, seg.startCol, seg.endCol, px,
+                             usableX + seg.xOffset + sa.xOffset, sa.spaceStretch);
     }
 
     // Snap off a UTF-8 continuation byte onto the codepoint's lead byte.
@@ -964,7 +968,8 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
     if (!defaultCache || !defaultCache->IsValid()) return;
 
     LayoutPass pass;
-    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
     const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
                     ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
@@ -992,38 +997,9 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
     FillRect(m_sdl, ctx.editorAreaPxX, ctx.editorAreaPxY,
              ctx.editorAreaPxW, ctx.editorAreaPxH, m_theme.background);
 
-    // Pass A: walk segments greedily to count pages AND record each row's
-    // first-segment position (page + y-in-page), which the float resolver
-    // needs to anchor a shape to its paragraph.
-    const int lineCount = ctx.buffer->LineCount();
-    std::vector<std::pair<int,int>> rowPagePos(static_cast<size_t>(std::max(0, lineCount)),
-                                               {0, 0});
-    int totalPages = 1;
-    {
-        int curPage = 0;
-        int yInPage = 0;
-        for (int li = 0; li < lineCount; ++li)
-        {
-            if (li > 0 && ctx.formatted && ctx.formatted->PageBreakBefore(li))
-            {
-                ++curPage;
-                yInPage = 0;
-            }
-            bool firstSeg = true;
-            for (const auto& seg : pass.segments[li])
-            {
-                if (yInPage + seg.height > usableH)
-                {
-                    ++curPage;
-                    yInPage = 0;
-                }
-                if (firstSeg) { rowPagePos[li] = { curPage, yInPage }; firstSeg = false; }
-                yInPage += seg.height;
-            }
-            if (firstSeg) rowPagePos[li] = { curPage, yInPage };  // empty line
-        }
-        totalPages = curPage + 1;
-    }
+    // Page count comes straight from the layout sweep (which knows columns +
+    // floats); no re-pagination here.
+    const int totalPages = pass.totalPages;
 
     // Cache the layout metrics so the editor's WYSIWYG scrollbar can size
     // its thumb and step the viewport without re-running the layout pass.
@@ -1066,26 +1042,15 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
         }
     };
 
-    // Resolve a float's on-screen pixel rect from its anchor row's page/pos.
-    auto tw2px = [&](int tw) { return (tw * dpi) / 1440; };
-    auto resolveFloat = [&](const FloatObject& f, int& x, int& y, int& w, int& h) {
-        int r     = std::clamp(f.anchorRow, 0, std::max(0, lineCount - 1));
-        int page  = rowPagePos.empty() ? 0 : rowPagePos[static_cast<size_t>(r)].first;
-        int yInPg = rowPagePos.empty() ? 0 : rowPagePos[static_cast<size_t>(r)].second;
-        int pageTopY = ctx.editorAreaPxY - viewport + page * pageStride;
-        // Column reference frame == Margin while there is a single column.
-        int originX = (f.hRef == FloatObject::HRef::Page) ? pageX : (pageX + mLeft);
-        int originY = pageTopY;                                   // Page
-        if (f.vRef == FloatObject::VRef::Margin)         originY = pageTopY + mTop;
-        else if (f.vRef == FloatObject::VRef::Paragraph) originY = pageTopY + mTop + yInPg;
-        x = originX + tw2px(f.left);
-        y = originY + tw2px(f.top);
-        w = tw2px(f.right - f.left);
-        h = tw2px(f.bottom - f.top);
-    };
-    auto drawFloat = [&](const FloatObject& f) {
-        int x, y, w, h;
-        resolveFloat(f, x, y, w, h);
+    // Draw a float from its layout-resolved rect (content/usableX coords →
+    // screen). The layout already placed it against the right page + column,
+    // so this works for single- and multi-column docs alike.
+    auto drawFloat = [&](const ResolvedFloat& rf) {
+        const FloatObject& f = *rf.obj;
+        int x = pageX + mLeft + rf.xLeft;
+        int y = ctx.editorAreaPxY - viewport + rf.page * pageStride + mTop + rf.yTop;
+        int w = rf.xRight - rf.xLeft;
+        int h = rf.yBottom - rf.yTop;
         if (w <= 0 || h <= 0) return;
         if (f.kind == FloatObject::Kind::Image)
         {
@@ -1097,8 +1062,7 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             }
             else
             {
-                // Undecodable (e.g. a vector WMF): a dim placeholder so the
-                // reserved space is still visible.
+                // Undecodable (e.g. a vector WMF): a dim placeholder.
                 FillRect  (m_sdl, x, y, w, h, mutedMargin);
                 StrokeRect(m_sdl, x, y, w, h, m_theme.border);
             }
@@ -1118,17 +1082,19 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
         }
     };
 
-    // Partition floats into below-text (drawn under the body) and above-text
-    // (drawn over it), each ordered by z. Drawn around Pass B below.
-    std::vector<const FloatObject*> belowFloats, aboveFloats;
-    if (ctx.formatted)
+    // Partition the resolved floats into below-text (drawn under the body) and
+    // above-text (over it), each ordered by z. Drawn around Pass B below.
+    std::vector<const ResolvedFloat*> belowFloats, aboveFloats;
+    for (const auto& rf : pass.floats)
     {
-        for (const auto& f : ctx.formatted->Floats())
-            (f.belowText ? belowFloats : aboveFloats).push_back(&f);
-        auto byZ = [](const FloatObject* a, const FloatObject* b) { return a->zOrder < b->zOrder; };
-        std::stable_sort(belowFloats.begin(), belowFloats.end(), byZ);
-        std::stable_sort(aboveFloats.begin(), aboveFloats.end(), byZ);
+        if (!rf.obj) continue;
+        (rf.obj->belowText ? belowFloats : aboveFloats).push_back(&rf);
     }
+    auto byZ = [](const ResolvedFloat* a, const ResolvedFloat* b) {
+        return a->obj->zOrder < b->obj->zOrder;
+    };
+    std::stable_sort(belowFloats.begin(), belowFloats.end(), byZ);
+    std::stable_sort(aboveFloats.begin(), aboveFloats.end(), byZ);
 
     for (int p = 0; p < totalPages; ++p)
     {
@@ -1175,7 +1141,7 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
     }
 
     // Floats that sit behind the text (drawn now, over the page rects).
-    for (const FloatObject* f : belowFloats) drawFloat(*f);
+    for (const ResolvedFloat* f : belowFloats) drawFloat(*f);
 
     // Selection range, normalized.
     int sr = 0, sc = 0, er = 0, ec = 0;
@@ -1201,10 +1167,12 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             int usableX  = pageX + mLeft + segs[s].xOffset;
             int segW     = segs[s].width;
 
-            // Cull lines fully outside the editor area.
-            if (textY + h < ctx.editorAreaPxY)
-                continue;
-            if (textY > ctx.editorAreaPxY + ctx.editorAreaPxH) goto done;
+            // Cull lines fully outside the editor area. Cull each segment
+            // individually (NOT an early break) — with multi-column flow the
+            // segments are not in monotonic screen-Y order, so a segment below
+            // the viewport may be followed by a visible one in the next column.
+            if (textY + h < ctx.editorAreaPxY) continue;
+            if (textY > ctx.editorAreaPxY + ctx.editorAreaPxH) continue;
 
             int segLo = segs[s].startCol;
             int segHi = segs[s].endCol;
@@ -1379,10 +1347,9 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             }
         }
     }
-done:
 
     // Floats that sit in front of the text (drawn last).
-    for (const FloatObject* f : aboveFloats) drawFloat(*f);
+    for (const ResolvedFloat* f : aboveFloats) drawFloat(*f);
 
     if (hadClip)
         SDL_SetRenderClipRect(m_sdl, &oldClip);
