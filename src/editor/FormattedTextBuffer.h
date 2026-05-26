@@ -1,5 +1,6 @@
 #pragma once
 #include "editor/CharStyle.h"
+#include "editor/FloatObject.h"
 #include "editor/TextBuffer.h"
 #include <cstdint>
 #include <string>
@@ -46,6 +47,15 @@ public:
     ParagraphAlign     Alignment(int row)           const;
     void               SetAlignment(int row, ParagraphAlign a);
     const std::vector<uint8_t>& Alignments()        const { return m_alignment; }
+
+    // Floating shapes/images, anchored to buffer rows. The vector is replaced
+    // wholesale by the RTF reader / undo (SetFloats); the mutators below only
+    // shift each object's anchorRow as rows are inserted/joined/deleted so a
+    // float stays attached to its paragraph. `FloatsMutable` is for in-place
+    // edits (e.g. authoring move/resize).
+    const std::vector<FloatObject>& Floats()        const { return m_floats; }
+    std::vector<FloatObject>&       FloatsMutable()       { return m_floats; }
+    void               SetFloats(std::vector<FloatObject> floats) { m_floats = std::move(floats); }
     // True if any character carries a non-default style/face/size, or any
     // row carries a page-break-before flag.
     bool               HasAnyFormatting()            const;
@@ -123,10 +133,19 @@ private:
     // change to keep the two vectors aligned.
     void EnsureLineFormatSize(int row, size_t len);
 
+    // Float anchor maintenance, called from the text mutators so a float
+    // stays attached to its paragraph as rows shift.
+    void ShiftAnchorsAtOrAfter(int firstRow, int delta);   // rows inserted
+    void MergeFloatAnchors(int removedRow, int mergeToRow); // two rows joined
+    void CollapseFloatAnchors(int startRow, int endRow);    // rows startRow+1..endRow removed
+
     TextBuffer                              m_text;
     std::vector<std::vector<CharFormat>>    m_formats;
     std::vector<bool>                       m_pageBreakBefore;
     // Parallel to m_pageBreakBefore: one ParagraphAlign (as uint8_t) per row.
     // Kept line-count-aligned in every mutator alongside m_pageBreakBefore.
     std::vector<uint8_t>                    m_alignment;
+    // Sparse list of floating objects keyed by anchorRow (not a per-row
+    // parallel vector). Mutators adjust anchorRow on row insert/join/delete.
+    std::vector<FloatObject>                m_floats;
 };

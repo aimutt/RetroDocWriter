@@ -2035,6 +2035,7 @@ void Application::EnsureUndoBeforeInsert()
 void Application::ApplyUndoState(const RichUndoState& s)
 {
     m_document->Buffer().SetLines(s.lines, s.formats, s.pageBreaks, s.alignment);
+    m_document->Buffer().SetFloats(s.floats);
     m_cursor.row    = s.cursorRow;
     m_cursor.column = s.cursorCol;
     m_selection.Clear();
@@ -3275,6 +3276,7 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.headerShowPageNumber = m_headerShowPageNumber;
     m_printRequest.footerShowFilename   = m_footerShowFilename;
     m_printRequest.footerShowPageNumber = m_footerShowPageNumber;
+    m_printRequest.floats               = &m_document->Buffer().Floats();
 
     m_promptMode    = PromptMode::None;
     m_statusMessage = "Printing...";

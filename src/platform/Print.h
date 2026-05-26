@@ -1,5 +1,6 @@
 #pragma once
 #include "editor/CharStyle.h"
+#include "editor/FloatObject.h"
 #include <string>
 #include <vector>
 
@@ -62,6 +63,11 @@ struct PrintRequest
     bool headerShowPageNumber = false;
     bool footerShowFilename   = false;
     bool footerShowPageNumber = false;
+
+    // Optional floating shapes/images, anchored to buffer rows. The formatted
+    // print path draws each at its resolved page position (z-ordered around
+    // the text). Null = no floats.
+    const std::vector<FloatObject>* floats = nullptr;
 };
 
 // Returns the installed printers. First entry is the system default (or the

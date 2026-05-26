@@ -1,5 +1,6 @@
 #pragma once
 #include "render/FontFace.h"
+#include "render/ImageCache.h"
 #include "render/Theme.h"
 #include <SDL3/SDL.h>
 #include <cstdint>
@@ -187,6 +188,7 @@ private:
 
     SDL_Renderer* m_sdl    = nullptr;
     const Theme&  m_theme;
+    ImageCache    m_imageCache;   // float image textures, keyed by FloatObject::imageId
     std::unordered_map<uint32_t, std::unique_ptr<GlyphCache>> m_caches;
     int      m_lastDpi              = 0;
     int      m_lastTotalDocumentPx  = 0;  // set at end of Draw()
