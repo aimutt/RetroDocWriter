@@ -1,6 +1,7 @@
 #pragma once
 #include "render/FontFace.h"
 #include "render/ImageCache.h"
+#include "render/PlacedSegment.h"
 #include "render/Theme.h"
 #include <SDL3/SDL.h>
 #include <cstdint>
@@ -157,6 +158,11 @@ public:
     // The returned column is a byte index into the row's UTF-8 line, already
     // snapped to a codepoint lead byte.
     bool HitTest(const DrawContext& ctx, int px, int py, int& outRow, int& outCol);
+
+    // Flattened, page-relative layout for `ctx` (px at ctx.screenDpi) — the
+    // same float-aware wrap + pagination Draw uses. The print path renders
+    // this verbatim so on-screen and printed line breaks/pagination match.
+    std::vector<PlacedSegment> ComputePlacedSegments(const DrawContext& ctx);
 
 private:
     // Resolve and return the cache for a (face, pointSize) combo at the

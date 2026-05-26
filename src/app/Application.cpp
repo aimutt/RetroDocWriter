@@ -3277,6 +3277,15 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.footerShowFilename   = m_footerShowFilename;
     m_printRequest.footerShowPageNumber = m_footerShowPageNumber;
     m_printRequest.floats               = &m_document->Buffer().Floats();
+    // Share the screen's exact layout (breaks, pagination, float runs) so the
+    // printed line breaks match WYSIWYG instead of diverging from GDI metrics.
+    {
+        WysiwygRenderer::DrawContext lctx = BuildWysiwygDrawContext();
+        m_printPlaced = m_wysiwyg ? m_wysiwyg->ComputePlacedSegments(lctx)
+                                  : std::vector<PlacedSegment>{};
+        m_printRequest.placedSegments = &m_printPlaced;
+        m_printRequest.layoutDpi      = lctx.screenDpi;
+    }
 
     m_promptMode    = PromptMode::None;
     m_statusMessage = "Printing...";

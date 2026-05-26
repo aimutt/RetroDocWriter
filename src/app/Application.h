@@ -370,6 +370,7 @@ private:
     // Print dialog state — populated when OpenPrintDialog runs, persists
     // across invocations within the session so the user's last choices stick.
     PrintRequest             m_printRequest;
+    std::vector<PlacedSegment> m_printPlaced;  // screen layout shared with the print path
     std::vector<std::string> m_printerList;
     int                      m_printPrinterIdx = 0;
     PrintField               m_printFocus      = PrintField::Printer;
