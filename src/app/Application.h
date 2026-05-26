@@ -45,6 +45,7 @@ enum class PromptMode
     CheckWordDialog,// text input -> Dictionary::Contains, result in status bar
     PrintDialog,    // full print dialog (printer, copies, range, orientation, margins)
     MarginsDialog,  // WYSIWYG page margins (per-document)
+    ColumnsDialog,  // whole-document column count + gutter (\cols / \colsx)
     ConfirmSaveAsRtf, // Ctrl+S on a .txt that has formatting: Y = SaveAs.rtf, N = flatten + save .txt
 };
 
@@ -242,6 +243,14 @@ private:
     void MarginTextEdit(char ch);
     void MarginBackspace();
 
+    // Columns dialog (Page > Columns…) — count + gutter, tab-cycled like Margins.
+    void OpenColumnsDialog();
+    void CloseColumnsDialog(bool commit);
+    void ColumnsCycleField(int dir);
+    void ColumnsAdjustField(int dir);
+    void ColumnsTextEdit(char ch);
+    void ColumnsBackspace();
+
     // Global app settings (persisted under %LOCALAPPDATA%\RetroEdit\)
     void LoadGlobalSettings();
     void SaveGlobalSettings();
@@ -385,6 +394,9 @@ private:
     // Margins dialog edit-in-progress strings (top, bottom, left, right)
     std::string      m_marginEditText[4];
     int              m_marginFocusIdx  = 0;
+    // Columns dialog edit-in-progress strings (count, gutter-in-inches)
+    std::string      m_columnsEditText[2];
+    int              m_columnsFocusIdx = 0;
 
     Layout                          m_layout;
     ThemeName                       m_themeName = ThemeName::Green;

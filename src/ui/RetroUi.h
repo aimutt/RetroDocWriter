@@ -118,6 +118,9 @@ struct EditorUiState
     bool        marginsDialogActive = false;
     std::string marginEditText[4];          // top, bottom, left, right
     int         marginFocusIdx      = 0;
+    bool        columnsDialogActive = false;
+    std::string columnsEditText[2];         // count, gutter (inches)
+    int         columnsFocusIdx     = 0;
 
     // Current per-character style applied to next-typed input (Format menu /
     // Ctrl+B/I/U). Reflected in the status-bar B/I/U/S indicators. CharStyle
@@ -248,6 +251,10 @@ public:
     MarginsHit HitTestMarginsDialog(int cellCol, int cellRow, int screenColumns) const;
     Rect       MarginsDialogRect   (int screenColumns) const;
 
+    enum class ColumnsHit { None, Count, Gutter, OkHint, CancelHint };
+    ColumnsHit HitTestColumnsDialog(int cellCol, int cellRow, int screenColumns) const;
+    Rect       ColumnsDialogRect   (int screenColumns) const;
+
 private:
     const Theme& m_theme;
     Layout       m_layout;
@@ -287,6 +294,7 @@ private:
     void DrawWordCountDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawPrintDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawMarginsDialog(ScreenBuffer& buffer, const EditorUiState& state);
+    void DrawColumnsDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawBox(ScreenBuffer& buffer, int x, int y, int w, int h, Color fg, Color bg);
 
     // Reusable vertical scrollbar. Fills `height` cells starting at (x, y)
