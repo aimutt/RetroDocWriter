@@ -1,6 +1,7 @@
 #pragma once
 #include "editor/CharStyle.h"
 #include "editor/FloatObject.h"
+#include "render/PlacedSegment.h"
 #include <string>
 #include <vector>
 
@@ -68,6 +69,14 @@ struct PrintRequest
     // print path draws each at its resolved page position (z-ordered around
     // the text). Null = no floats.
     const std::vector<FloatObject>* floats = nullptr;
+
+    // Optional pre-computed layout from WysiwygRenderer (px at `layoutDpi`).
+    // When supplied, the formatted print path renders these exact lines —
+    // same breaks, pagination, and float runs as the screen — instead of
+    // re-wrapping with GDI metrics. `layoutDpi` is the DPI those pixels are
+    // in (the on-screen 96), scaled to the printer's DPI at draw time.
+    const std::vector<PlacedSegment>* placedSegments = nullptr;
+    int                               layoutDpi      = 96;
 };
 
 // Returns the installed printers. First entry is the system default (or the

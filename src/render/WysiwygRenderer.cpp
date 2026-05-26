@@ -515,6 +515,11 @@ static void BuildLayoutPass(LayoutPass& out,
                             :  yInPage;                              // Paragraph
                 rf.yTop    = yOrigin + tw2px(f.top);
                 rf.yBottom = yOrigin + tw2px(f.bottom);
+                // An image caption is drawn just below the picture, so extend
+                // the exclusion to cover it — otherwise text could wrap onto
+                // the caption.
+                if (f.kind == FloatObject::Kind::Image && !f.caption.empty())
+                    rf.yBottom += out.defaultLineHeight + 2;
                 int xOrigin = (f.hRef == FloatObject::HRef::Page) ? -geom.mLeft : 0;
                 rf.xLeft   = xOrigin + tw2px(f.left);
                 rf.xRight  = xOrigin + tw2px(f.right);
@@ -631,6 +636,40 @@ WysiwygRenderer::ComputeVisualLayout(const DrawContext& ctx)
             out.push_back(std::move(vl));
         }
     }
+    return out;
+}
+
+std::vector<PlacedSegment>
+WysiwygRenderer::ComputePlacedSegments(const DrawContext& ctx)
+{
+    std::vector<PlacedSegment> out;
+    if (!ctx.buffer) return out;
+    const int dpi = std::max(48, ctx.screenDpi);
+
+    const int pageW   = static_cast<int>(kPaperWidthIn  * dpi);
+    const int pageH   = static_cast<int>(kPaperHeightIn * dpi);
+    const int mLeft   = static_cast<int>(ctx.margins.leftIn   * dpi);
+    const int mRight  = static_cast<int>(ctx.margins.rightIn  * dpi);
+    const int mTop    = static_cast<int>(ctx.margins.topIn    * dpi);
+    const int mBottom = static_cast<int>(ctx.margins.bottomIn * dpi);
+    const int usableW = std::max(1, pageW - mLeft - mRight);
+    const int usableH = std::max(1, pageH - mTop  - mBottom);
+
+    LayoutPass pass;
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
+    BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
+                    [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
+                    [&](FontFace f, int p, unsigned int cp) {
+                        int px = std::max(1, (p * dpi + 36) / 72);
+                        return SubpxAdvance(f, px, cp);
+                    });
+
+    for (int li = 0; li < ctx.buffer->LineCount(); ++li)
+        for (const auto& s : pass.segments[li])
+            out.push_back(PlacedSegment{ li, s.startCol, s.endCol, s.page,
+                                         s.yInPage, s.xOffset, s.width, s.height });
     return out;
 }
 

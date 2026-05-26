@@ -826,61 +826,88 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
     std::vector<PlacedSeg> placed;
     std::vector<int> rowPage(static_cast<size_t>(std::max(0, lineCount)), 1);
     std::vector<int> rowY   (static_cast<size_t>(std::max(0, lineCount)), 0);
-    int curPage = 1;
-    int yInPage = 0;
-    for (int li = 0; li < lineCount; ++li)
+    int totalPages = 1;
+    if (req.placedSegments && !req.placedSegments->empty())
     {
-        if (li > 0 && req.pageBreakBefore
-            && li < static_cast<int>(req.pageBreakBefore->size())
-            && (*req.pageBreakBefore)[li])
+        // WYSIWYG path: render the screen's exact layout, scaled from its DPI
+        // to the printer's. Page index is 0-based on screen, 1-based here.
+        const double sx = static_cast<double>(dpiX) / std::max(1, req.layoutDpi);
+        const double sy = static_cast<double>(dpiY) / std::max(1, req.layoutDpi);
+        auto scaleX = [&](int v) { return static_cast<int>(v * sx + 0.5); };
+        auto scaleY = [&](int v) { return static_cast<int>(v * sy + 0.5); };
+        std::vector<bool> rowSeen(static_cast<size_t>(std::max(0, lineCount)), false);
+        for (const auto& p : *req.placedSegments)
         {
-            ++curPage;
-            yInPage = 0;
-        }
-        // Resolve floats anchored to this row into content-coordinate spans.
-        if (req.floats)
-            for (const auto& f : *req.floats)
-            {
-                if (f.anchorRow != li) continue;
-                Excl e; e.page = curPage;
-                int yOrigin = (f.vRef == FloatObject::VRef::Margin) ? 0
-                            : (f.vRef == FloatObject::VRef::Page)   ? -marginTopPx
-                            :  yInPage;
-                e.yTop = yOrigin + twY(f.top);  e.yBottom = yOrigin + twY(f.bottom);
-                int xOrigin = (f.hRef == FloatObject::HRef::Page) ? -marginLeftPx : 0;
-                e.xL = xOrigin + twX(f.left);   e.xR = xOrigin + twX(f.right);
-                e.reflow = (f.wrapType == 1 || f.wrapType == 4 || f.wrapType == 5);
-                exclusions.push_back(e);
-            }
-        rowPage[li] = curPage; rowY[li] = yInPage;
-        const auto& cs = chars[li];
-        const int nchars = static_cast<int>(cs.size());
-        if (nchars == 0)
-        {
-            int h = defaultLineHeight;
-            if (yInPage + h > usableHeight && yInPage > 0) { ++curPage; yInPage = 0; rowPage[li] = curPage; rowY[li] = yInPage; }
-            segments[li].push_back({ 0, 0, h });
-            placed.push_back({ li, 0, curPage, yInPage, 0, usableWidth });
-            yInPage += h;
-            continue;
-        }
-        int col = 0; bool first = true;
-        while (col < nchars)
-        {
-            int provH = cs[col].lineHeight;
-            if (yInPage + provH > usableHeight && yInPage > 0) { ++curPage; yInPage = 0; }
-            int xL, xR; freeRun(curPage, yInPage, provH, xL, xR);
-            int endExcl, nextCol, h2;
-            wrapChunk(cs, col, xR - xL, endExcl, nextCol, h2);
+            if (p.bufferRow < 0 || p.bufferRow >= lineCount) continue;
+            int li   = p.bufferRow;
             int sidx = static_cast<int>(segments[li].size());
-            segments[li].push_back({ col, endExcl, h2 });
-            placed.push_back({ li, sidx, curPage, yInPage, xL, xR - xL });
-            if (first) { rowPage[li] = curPage; rowY[li] = yInPage; first = false; }
-            yInPage += h2;
-            col = nextCol;
+            int page = p.page + 1;
+            segments[li].push_back({ p.startCol, p.endCol, scaleY(p.height) });
+            placed.push_back({ li, sidx, page, scaleY(p.yInPage),
+                               scaleX(p.xOffset), scaleX(p.width) });
+            if (!rowSeen[li]) { rowPage[li] = page; rowY[li] = scaleY(p.yInPage); rowSeen[li] = true; }
+            totalPages = std::max(totalPages, page);
         }
     }
-    const int totalPages = std::max(1, curPage);
+    else
+    {
+        // Fallback: GDI-metric float-aware sweep (used only when no shared
+        // layout was supplied).
+        int curPage = 1;
+        int yInPage = 0;
+        for (int li = 0; li < lineCount; ++li)
+        {
+            if (li > 0 && req.pageBreakBefore
+                && li < static_cast<int>(req.pageBreakBefore->size())
+                && (*req.pageBreakBefore)[li])
+            {
+                ++curPage;
+                yInPage = 0;
+            }
+            if (req.floats)
+                for (const auto& f : *req.floats)
+                {
+                    if (f.anchorRow != li) continue;
+                    Excl e; e.page = curPage;
+                    int yOrigin = (f.vRef == FloatObject::VRef::Margin) ? 0
+                                : (f.vRef == FloatObject::VRef::Page)   ? -marginTopPx
+                                :  yInPage;
+                    e.yTop = yOrigin + twY(f.top);  e.yBottom = yOrigin + twY(f.bottom);
+                    int xOrigin = (f.hRef == FloatObject::HRef::Page) ? -marginLeftPx : 0;
+                    e.xL = xOrigin + twX(f.left);   e.xR = xOrigin + twX(f.right);
+                    e.reflow = (f.wrapType == 1 || f.wrapType == 4 || f.wrapType == 5);
+                    exclusions.push_back(e);
+                }
+            rowPage[li] = curPage; rowY[li] = yInPage;
+            const auto& cs = chars[li];
+            const int nchars = static_cast<int>(cs.size());
+            if (nchars == 0)
+            {
+                int h = defaultLineHeight;
+                if (yInPage + h > usableHeight && yInPage > 0) { ++curPage; yInPage = 0; rowPage[li] = curPage; rowY[li] = yInPage; }
+                segments[li].push_back({ 0, 0, h });
+                placed.push_back({ li, 0, curPage, yInPage, 0, usableWidth });
+                yInPage += h;
+                continue;
+            }
+            int col = 0; bool first = true;
+            while (col < nchars)
+            {
+                int provH = cs[col].lineHeight;
+                if (yInPage + provH > usableHeight && yInPage > 0) { ++curPage; yInPage = 0; }
+                int xL, xR; freeRun(curPage, yInPage, provH, xL, xR);
+                int endExcl, nextCol, h2;
+                wrapChunk(cs, col, xR - xL, endExcl, nextCol, h2);
+                int sidx = static_cast<int>(segments[li].size());
+                segments[li].push_back({ col, endExcl, h2 });
+                placed.push_back({ li, sidx, curPage, yInPage, xL, xR - xL });
+                if (first) { rowPage[li] = curPage; rowY[li] = yInPage; first = false; }
+                yInPage += h2;
+                col = nextCol;
+            }
+        }
+        totalPages = std::max(1, curPage);
+    }
 
     const int firstPage = req.allPages ? 1 : std::max(1, req.pageFrom);
     const int lastPage  = req.allPages ? totalPages
