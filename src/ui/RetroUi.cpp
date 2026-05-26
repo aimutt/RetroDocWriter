@@ -68,6 +68,11 @@ void RetroUi::Draw(ScreenBuffer& buffer, const Cursor& cursor, const EditorUiSta
         CheckDialogBoundsRight(buffer, PrintDialogRect(buffer.Columns()), "PrintDialog");
     }
 
+    if (state.columnsDialogActive)
+    {
+        DrawColumnsDialog(buffer, state);
+        CheckDialogBoundsRight(buffer, ColumnsDialogRect(buffer.Columns()), "ColumnsDialog");
+    }
     if (state.marginsDialogActive)
     {
         DrawMarginsDialog(buffer, state);
@@ -1272,6 +1277,10 @@ namespace
     constexpr int kMarginsW = 50;
     constexpr int kMarginsH = 9;
     const char* const kMarginsHint = "[Tab] Next  [Enter] OK  [Esc] Cancel";
+
+    constexpr int kColumnsW = 46;
+    constexpr int kColumnsH = 7;
+    const char* const kColumnsHint = "[Tab] Next  [Enter] OK  [Esc] Cancel";
 }
 
 RetroUi::Rect RetroUi::MarginsDialogRect(int screenColumns) const
@@ -1356,6 +1365,70 @@ RetroUi::MarginsHit RetroUi::HitTestMarginsDialog(int cellCol, int cellRow, int 
         if (tok == "ESC")   return MarginsHit::CancelHint;
     }
     return MarginsHit::None;
+}
+
+// ---------------------------------------------------------------------------
+// Columns dialog — column count + gutter (inches).
+// ---------------------------------------------------------------------------
+
+RetroUi::Rect RetroUi::ColumnsDialogRect(int screenColumns) const
+{
+    return CenteredRect(screenColumns, m_layout.SCREEN_ROWS, kColumnsW, kColumnsH);
+}
+
+void RetroUi::DrawColumnsDialog(ScreenBuffer& buffer, const EditorUiState& state)
+{
+    Rect r = ColumnsDialogRect(buffer.Columns());
+    const int x = r.x, y = r.y;
+    Color fg = m_theme.normalText, bg = m_theme.background;
+    Color bright = m_theme.brightText, dim = m_theme.dimText;
+
+    DrawBox(buffer, x, y, r.w, r.h, fg, bg);
+    std::string title = " Columns ";
+    buffer.WriteText(x + (r.w - static_cast<int>(title.size())) / 2, y, title, bright, bg);
+
+    auto field = [&](int row, int col, int width, const std::string& text, bool focused) {
+        Color tfg = focused ? m_theme.reverseForeground : bright;
+        Color tbg = focused ? m_theme.reverseBackground : bg;
+        buffer.PutChar(x + col,             y + row, U'[', dim, bg);
+        buffer.PutChar(x + col + width - 1, y + row, U']', dim, bg);
+        for (int c = 1; c < width - 1; ++c)
+            buffer.PutChar(x + col + c, y + row, U' ', tfg, tbg);
+        int inner = width - 2;
+        int n = std::min(static_cast<int>(text.size()), inner);
+        int startC = col + 1 + (inner - n);
+        for (int i = 0; i < n; ++i)
+            buffer.PutChar(x + startC + i, y + row,
+                           static_cast<char32_t>(static_cast<unsigned char>(text[i])),
+                           tfg, tbg);
+    };
+
+    buffer.WriteText(x + 2, y + 2, "Count:", fg, bg);
+    field(2, 9, 5, state.columnsEditText[0], state.columnsFocusIdx == 0);
+    buffer.WriteText(x + 18, y + 2, "Gutter (in):", fg, bg);
+    field(2, 31, 6, state.columnsEditText[1], state.columnsFocusIdx == 1);
+
+    buffer.WriteText(x + 2, y + r.h - 2, kColumnsHint, dim, bg);
+}
+
+RetroUi::ColumnsHit RetroUi::HitTestColumnsDialog(int cellCol, int cellRow, int screenColumns) const
+{
+    Rect r = ColumnsDialogRect(screenColumns);
+    if (!r.Contains(cellCol, cellRow)) return ColumnsHit::None;
+    const int rx = cellCol - r.x, ry = cellRow - r.y;
+    auto in = [&](int col, int width) { return rx >= col && rx < col + width; };
+    if (ry == 2)
+    {
+        if (in(9,  5)) return ColumnsHit::Count;
+        if (in(31, 6)) return ColumnsHit::Gutter;
+    }
+    if (ry == r.h - 2)
+    {
+        std::string tok = TokenAt(kColumnsHint, r.x + 2, cellCol);
+        if (tok == "ENTER") return ColumnsHit::OkHint;
+        if (tok == "ESC")   return ColumnsHit::CancelHint;
+    }
+    return ColumnsHit::None;
 }
 
 // ---------------------------------------------------------------------------

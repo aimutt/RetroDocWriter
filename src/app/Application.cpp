@@ -876,6 +876,22 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
         }
     }
 
+    // Columns dialog — two fields (count, gutter), Tab cycles, Up/Down adjusts.
+    if (m_promptMode == PromptMode::ColumnsDialog)
+    {
+        const bool shift = (key.mod & SDL_KMOD_SHIFT) != 0;
+        switch (key.scancode)
+        {
+            case SDL_SCANCODE_TAB:       ColumnsCycleField(shift ? -1 : +1); return;
+            case SDL_SCANCODE_UP:        ColumnsAdjustField(+1);             return;
+            case SDL_SCANCODE_DOWN:      ColumnsAdjustField(-1);             return;
+            case SDL_SCANCODE_BACKSPACE: ColumnsBackspace();                 return;
+            case SDL_SCANCODE_RETURN:    CloseColumnsDialog(true);           return;
+            case SDL_SCANCODE_ESCAPE:    CloseColumnsDialog(false);          return;
+            default:                     return;
+        }
+    }
+
     // Print dialog — Tab cycles fields, Up/Down adjusts, Space toggles radio
     // groups, digits/'.' edit numeric fields, Enter prints, Esc cancels.
     if (m_promptMode == PromptMode::PrintDialog)
@@ -1314,6 +1330,28 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
         return true;
     }
 
+    // Columns dialog
+    if (m_promptMode == PromptMode::ColumnsDialog)
+    {
+        auto rect = m_ui->ColumnsDialogRect(m_screenColumns);
+        if (!rect.Contains(cellCol, cellRow))
+        {
+            CloseColumnsDialog(false);
+            m_needsRedraw = true;
+            return true;
+        }
+        auto hit = m_ui->HitTestColumnsDialog(cellCol, cellRow, m_screenColumns);
+        switch (hit)
+        {
+            case RetroUi::ColumnsHit::Count:      m_columnsFocusIdx = 0; m_needsRedraw = true; break;
+            case RetroUi::ColumnsHit::Gutter:     m_columnsFocusIdx = 1; m_needsRedraw = true; break;
+            case RetroUi::ColumnsHit::OkHint:     CloseColumnsDialog(true);  m_needsRedraw = true; break;
+            case RetroUi::ColumnsHit::CancelHint: CloseColumnsDialog(false); m_needsRedraw = true; break;
+            default: break;
+        }
+        return true;
+    }
+
     // Print dialog
     if (m_promptMode == PromptMode::PrintDialog)
     {
@@ -1719,6 +1757,11 @@ void Application::HandleTextInput(const char* text)
         {
             for (const char* p = text; *p; ++p)
                 MarginTextEdit(*p);
+        }
+        else if (m_promptMode == PromptMode::ColumnsDialog)
+        {
+            for (const char* p = text; *p; ++p)
+                ColumnsTextEdit(*p);
         }
         return;
     }
@@ -2523,6 +2566,7 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
                 case 2: ToggleHeaderFooterField(m_headerShowPageNumber, "Header page number"); break;
                 case 3: ToggleHeaderFooterField(m_footerShowFilename,   "Footer file name");   break;
                 case 4: ToggleHeaderFooterField(m_footerShowPageNumber, "Footer page number"); break;
+                case 5: OpenColumnsDialog(); break; // Columns...
                 default: break;
             }
             break;
@@ -3533,6 +3577,95 @@ void Application::MarginBackspace()
     if (!s.empty()) s.pop_back();
 }
 
+// --- Columns dialog --------------------------------------------------------
+// Field 0 = column count (integer 1..12), field 1 = gutter (inches).
+
+void Application::OpenColumnsDialog()
+{
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d", m_document->Buffer().ColumnCount());
+    m_columnsEditText[0] = buf;
+    std::snprintf(buf, sizeof(buf), "%.2f",
+                  m_document->Buffer().ColumnGutterTwips() / 1440.0);
+    m_columnsEditText[1] = buf;
+    m_columnsFocusIdx = 0;
+    m_promptMode      = PromptMode::ColumnsDialog;
+    m_statusMessage.clear();
+}
+
+void Application::CloseColumnsDialog(bool commit)
+{
+    if (!commit)
+    {
+        m_promptMode    = PromptMode::None;
+        m_statusMessage = "Ready";
+        return;
+    }
+    int count = 1;
+    try { count = std::stoi(m_columnsEditText[0]); } catch (...) {}
+    count = std::clamp(count, 1, 12);
+    double gutterIn = 0.5;
+    try { gutterIn = std::stod(m_columnsEditText[1]); } catch (...) {}
+    gutterIn = std::clamp(gutterIn, 0.0, 3.0);
+
+    m_document->Buffer().SetColumns(count, static_cast<int>(gutterIn * 1440.0 + 0.5));
+    m_document->MarkDirty();
+    m_promptMode    = PromptMode::None;
+    m_statusMessage = (count > 1) ? (std::to_string(count) + " columns")
+                                  : "Single column";
+    UpdateWindowTitle();
+    // Columns aren't sidecar-persisted; the user keeps them by saving as RTF.
+}
+
+void Application::ColumnsCycleField(int dir)
+{
+    m_columnsFocusIdx = ((m_columnsFocusIdx + dir) % 2 + 2) % 2;
+}
+
+void Application::ColumnsAdjustField(int dir)
+{
+    if (m_columnsFocusIdx == 0)
+    {
+        int v = 1;
+        try { v = std::stoi(m_columnsEditText[0]); } catch (...) {}
+        v = std::clamp(v + dir, 1, 12);
+        m_columnsEditText[0] = std::to_string(v);
+    }
+    else
+    {
+        double v = 0.5;
+        try { v = std::stod(m_columnsEditText[1]); } catch (...) {}
+        v = std::clamp(v + 0.05 * dir, 0.0, 3.0);
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%.2f", v);
+        m_columnsEditText[1] = buf;
+    }
+}
+
+void Application::ColumnsTextEdit(char ch)
+{
+    std::string& s = m_columnsEditText[m_columnsFocusIdx];
+    bool isDigit = (ch >= '0' && ch <= '9');
+    bool isDot   = (ch == '.');
+    if (m_columnsFocusIdx == 0)        // count: digits only
+    {
+        if (!isDigit || s.size() >= 2) return;
+    }
+    else                              // gutter: digits + one dot
+    {
+        if (!isDigit && !isDot) return;
+        if (isDot && s.find('.') != std::string::npos) return;
+        if (s.size() >= 5) return;
+    }
+    s.push_back(ch);
+}
+
+void Application::ColumnsBackspace()
+{
+    std::string& s = m_columnsEditText[m_columnsFocusIdx];
+    if (!s.empty()) s.pop_back();
+}
+
 // ---------------------------------------------------------------------------
 // Per-file settings sidecar
 //
@@ -3862,6 +3995,10 @@ void Application::Render()
     uiState.marginsDialogActive = (m_promptMode == PromptMode::MarginsDialog);
     for (int i = 0; i < 4; ++i) uiState.marginEditText[i] = m_marginEditText[i];
     uiState.marginFocusIdx      = m_marginFocusIdx;
+    uiState.columnsDialogActive = (m_promptMode == PromptMode::ColumnsDialog);
+    uiState.columnsEditText[0]  = m_columnsEditText[0];
+    uiState.columnsEditText[1]  = m_columnsEditText[1];
+    uiState.columnsFocusIdx     = m_columnsFocusIdx;
     if (m_highlightMisspelled)
     {
         // Tokenize each visible buffer line and record misspelled spans.

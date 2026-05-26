@@ -78,6 +78,7 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "Header: Page Number", ""  },
             { "Footer: File Name",   ""  },
             { "Footer: Page Number", ""  },
+            { "Columns...",          ""  },
         }},
         { "Tools", 42, {
             { "Add to Dictionary...",      "" },
