@@ -23,6 +23,7 @@ RichUndoState RichUndoHistory::Snapshot(const FormattedTextBuffer& buf,
         s.pageBreaks.push_back(buf.PageBreakBefore(i));
         s.alignment.push_back(static_cast<uint8_t>(buf.Alignment(i)));
     }
+    s.floats = buf.Floats();
     return s;
 }
 

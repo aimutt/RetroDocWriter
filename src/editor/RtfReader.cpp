@@ -86,12 +86,58 @@ namespace
         uint8_t curAlignment = static_cast<uint8_t>(ParagraphAlign::Left);
         std::vector<uint8_t> lineAlignment;
 
+        // Shape (\shp) parsing. While inShape, body emission is suppressed and
+        // bytes route through handleShapeByte (pict hex / caption / discard).
+        // Depths record the brace level of the {\shp}, {\pict}, {\shptxt} and
+        // {\shprslt} groups so the matching `}` can finalize/close each.
+        bool inShape = false;
+        int  shpBraceDepth     = 0;
+        int  pictBraceDepth    = 0;
+        int  shptxtBraceDepth  = 0;
+        int  shprsltBraceDepth = 0;   // fallback rendering — skipped entirely
+        FloatObject curShape;
+        std::string pictHex;
+        std::vector<FloatObject> floats;
+
         Parser(const std::string& s, FormattedTextBuffer& o) : src(s), out(o)
         {
             lines.emplace_back();
             formatRows.emplace_back();
             pageBreakBefore.push_back(false);
             lineAlignment.push_back(static_cast<uint8_t>(ParagraphAlign::Left));
+        }
+
+        // Route a literal byte while inside a shape: pict hex (only at the
+        // pict group's own brace level, so nested {\*\blipuid …} hex is not
+        // mistaken for image data), caption text, or discard.
+        void handleShapeByte(unsigned char b)
+        {
+            if (shprsltBraceDepth > 0) return;
+            if (pictBraceDepth > 0)
+            {
+                if (braceDepth == pictBraceDepth && HexDigit(static_cast<char>(b)) >= 0)
+                    pictHex.push_back(static_cast<char>(b));
+                return;
+            }
+            if (shptxtBraceDepth > 0)
+            {
+                if (b == '\n')      curShape.caption.push_back(' ');
+                else if (b != '\r') curShape.caption.push_back(static_cast<char>(b));
+                return;
+            }
+            // structural bytes (property names/values) — discard
+        }
+
+        static void DecodeHexInto(std::vector<uint8_t>& out, const std::string& hex)
+        {
+            int hi = -1;
+            for (char c : hex)
+            {
+                int d = HexDigit(c);
+                if (d < 0) continue;
+                if (hi < 0) hi = d;
+                else { out.push_back(static_cast<uint8_t>((hi << 4) | d)); hi = -1; }
+            }
         }
 
         bool skipping() const { return skipFromDepth > 0; }
@@ -141,6 +187,11 @@ namespace
 
         void emitByte(unsigned char b)
         {
+            // Inside a shape, bytes never reach the document body — they feed
+            // the pict/caption capture (or are discarded). Takes precedence
+            // over the skip check so the \* destinations nested in a shape
+            // (e.g. \*\blipuid) still route here rather than vanishing early.
+            if (inShape) { handleShapeByte(b); return; }
             if (skipping()) return;
             if (b == '\n')
             {
@@ -223,8 +274,58 @@ namespace
             return lines.size() == 1 && lines.back().empty();
         }
 
+        // Shape control words. Returns true if `word` was consumed by shape
+        // parsing (so the generic body handlers below are skipped).
+        bool HandleShapeWord(const std::string& word, bool hasParam, int param)
+        {
+            if (word == "shp")
+            {
+                inShape = true;
+                shpBraceDepth = braceDepth;
+                curShape = FloatObject{};
+                curShape.anchorRow = static_cast<int>(lines.size()) - 1;
+                pictHex.clear();
+                pictBraceDepth = shptxtBraceDepth = shprsltBraceDepth = 0;
+                return true;
+            }
+            if (!inShape) return false;
+
+            // \*\shpinst — cancel the \* skip so the instance is parsed.
+            if (word == "shpinst")
+            {
+                if (skipFromDepth == braceDepth) skipFromDepth = 0;
+                return true;
+            }
+            if (word == "shprslt") { shprsltBraceDepth = braceDepth; return true; }
+            if (word == "shptxt")  { shptxtBraceDepth  = braceDepth; return true; }
+            if (shprsltBraceDepth == 0)
+            {
+                if (word == "shpleft"   && hasParam) { curShape.left   = param; return true; }
+                if (word == "shptop"    && hasParam) { curShape.top    = param; return true; }
+                if (word == "shpright"  && hasParam) { curShape.right  = param; return true; }
+                if (word == "shpbottom" && hasParam) { curShape.bottom = param; return true; }
+                if (word == "shpbxpage")   { curShape.hRef = FloatObject::HRef::Page;      return true; }
+                if (word == "shpbxmargin") { curShape.hRef = FloatObject::HRef::Margin;    return true; }
+                if (word == "shpbxcolumn") { curShape.hRef = FloatObject::HRef::Column;    return true; }
+                if (word == "shpbypage")   { curShape.vRef = FloatObject::VRef::Page;      return true; }
+                if (word == "shpbymargin") { curShape.vRef = FloatObject::VRef::Margin;    return true; }
+                if (word == "shpbypara")   { curShape.vRef = FloatObject::VRef::Paragraph; return true; }
+                if (word == "shpwr"      && hasParam) { curShape.wrapType  = param;       return true; }
+                if (word == "shpwrk"     && hasParam) { curShape.wrapSide  = param;       return true; }
+                if (word == "shpz"       && hasParam) { curShape.zOrder    = param;       return true; }
+                if (word == "shpfblwtxt" && hasParam) { curShape.belowText = (param != 0); return true; }
+                if (word == "pict")     { pictBraceDepth = braceDepth; pictHex.clear(); return true; }
+                if (word == "pngblip")  { curShape.isPng = true;  return true; }
+                if (word == "jpegblip") { curShape.isPng = false; return true; }
+            }
+            // Any other control word inside a shape (\sp/\sn/\sv/\picw/…) is
+            // consumed and ignored so it never reaches the body handlers.
+            return true;
+        }
+
         void HandleControlWord(const std::string& word, bool hasParam, int param)
         {
+            if (HandleShapeWord(word, hasParam, param)) return;
             if (word == "par" || word == "line")
             {
                 emitByte('\n');
@@ -456,6 +557,37 @@ namespace
                     fontTblOpenDepth = 0;
                 if (colorTblOpenDepth > 0 && braceDepth == colorTblOpenDepth)
                     colorTblOpenDepth = 0;
+                if (inShape)
+                {
+                    if (pictBraceDepth > 0 && braceDepth == pictBraceDepth)
+                    {
+                        DecodeHexInto(curShape.imageBytes, pictHex);
+                        pictHex.clear();
+                        pictBraceDepth = 0;
+                    }
+                    if (shptxtBraceDepth > 0 && braceDepth == shptxtBraceDepth)
+                        shptxtBraceDepth = 0;
+                    if (shprsltBraceDepth > 0 && braceDepth == shprsltBraceDepth)
+                        shprsltBraceDepth = 0;
+                    if (shpBraceDepth > 0 && braceDepth == shpBraceDepth)
+                    {
+                        // Finalize: image if it carried a \pict, else a box.
+                        curShape.kind = curShape.imageBytes.empty()
+                                      ? FloatObject::Kind::Box
+                                      : FloatObject::Kind::Image;
+                        if (curShape.kind == FloatObject::Kind::Image)
+                            curShape.imageId = NextFloatImageId();
+                        if (curShape.anchorRow < 0) curShape.anchorRow = 0;
+                        // Trim trailing whitespace the caption capture may have left.
+                        while (!curShape.caption.empty()
+                               && (curShape.caption.back() == ' '
+                                || curShape.caption.back() == '\t'))
+                            curShape.caption.pop_back();
+                        floats.push_back(std::move(curShape));
+                        inShape = false;
+                        shpBraceDepth = 0;
+                    }
+                }
                 if (!styleStack.empty())
                 {
                     curStyle = styleStack.back();
@@ -537,8 +669,16 @@ namespace
             pageBreakBefore.resize(lines.size(), false);
             lineAlignment.resize(lines.size(),
                                  static_cast<uint8_t>(ParagraphAlign::Left));
+            // Clamp shape anchors into range (a popped trailing line could
+            // leave an anchor one past the end), then install them. Always
+            // SetFloats — even when empty — so stale shapes from a prior load
+            // on the same buffer are cleared.
+            int lastRow = static_cast<int>(lines.size()) - 1;
+            for (auto& f : floats)
+                if (f.anchorRow > lastRow) f.anchorRow = lastRow;
             out.SetLines(std::move(lines), std::move(formatRows),
                          std::move(pageBreakBefore), std::move(lineAlignment));
+            out.SetFloats(std::move(floats));
         }
     };
 }

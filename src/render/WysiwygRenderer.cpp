@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -160,77 +161,22 @@ namespace
     // source column where this visual segment begins; `endCol` is exclusive.
     // `height` is max LineHeight among chars in the segment (or the empty-
     // line fallback when the segment has no chars).
+    //
+    // page/yInPage are filled by the layout pass's pagination so every
+    // consumer reads one shared placement instead of re-paginating.
+    // xOffset/width describe the segment's horizontal run within the column:
+    // for a normal line xOffset=0, width=usableW; beside a wrapping float the
+    // run shrinks/shifts so text flows around it.
     struct LineSegment
     {
         int startCol;
         int endCol;
         int height;
+        int page    = 0;
+        int yInPage = 0;
+        int xOffset = 0;
+        int width   = 0;
     };
-
-    // Wrap by pixel-width, emitting segments whose summed advance fits
-    // within `usableW`. Breaks at the most recent whitespace when possible
-    // and consumes that whitespace (matches Print.cpp's behavior). Empty
-    // source lines produce one zero-length segment so they still consume a
-    // row.
-    std::vector<LineSegment> WrapLinePixels(const std::vector<CharRender>& chars,
-                                            int usableW, int emptyLineHeight)
-    {
-        std::vector<LineSegment> out;
-        if (chars.empty())
-        {
-            out.push_back(LineSegment{ 0, 0, emptyLineHeight });
-            return out;
-        }
-        if (usableW <= 0)
-        {
-            out.push_back(LineSegment{ 0, static_cast<int>(chars.size()),
-                                       emptyLineHeight });
-            return out;
-        }
-
-        int    segStart  = 0;
-        // Wrap-budget accumulator runs in sub-pixel precision so the
-        // wrap column matches what LibreOffice / print compute (both
-        // use higher-resolution metrics than the 16-px TTF we sample
-        // for screen drawing).
-        double xAccum    = 0.0;
-        int    lastBreak = -1;
-        int    segHeight = 0;
-
-        auto emit = [&](int endExcl) {
-            int h = segHeight > 0 ? segHeight : emptyLineHeight;
-            out.push_back(LineSegment{ segStart, endExcl, h });
-        };
-
-        const int n = static_cast<int>(chars.size());
-        for (int c = 0; c < n; ++c)
-        {
-            const CharRender& cr = chars[c];
-            if (xAccum + cr.advanceSubpx > usableW && c > segStart)
-            {
-                int breakAt = (lastBreak > segStart) ? lastBreak : c;
-                emit(breakAt);
-                segStart = (breakAt == c) ? c : (breakAt + 1);
-                xAccum   = 0.0;
-                segHeight = 0;
-                lastBreak = -1;
-                for (int k = segStart; k <= c; ++k)
-                {
-                    xAccum += chars[k].advanceSubpx;
-                    if (chars[k].lineHeight > segHeight) segHeight = chars[k].lineHeight;
-                    if (chars[k].ch == ' ' || chars[k].ch == '\t') lastBreak = k;
-                }
-            }
-            else
-            {
-                xAccum += cr.advanceSubpx;
-                if (cr.lineHeight > segHeight) segHeight = cr.lineHeight;
-                if (cr.ch == ' ' || cr.ch == '\t') lastBreak = c;
-            }
-        }
-        emit(n);
-        return out;
-    }
 
     // Measure a wrapped segment [segLo, segHi) for alignment: full sub-pixel
     // content width, the width up to the last non-space glyph (for Center/
@@ -252,6 +198,85 @@ namespace
         trimmedW   = lastNonSpaceEnd;
         spaceCount = spaces;
     }
+
+    // A float resolved into layout (page-content) coordinates: page index,
+    // vertical band [yTop,yBottom) measured from the content-area top (same
+    // space as a segment's yInPage), and horizontal span [xLeft,xRight)
+    // measured from the column's left edge (usableX). `reflow` is true only
+    // for wrap types that push text aside (1 square / 4 tight / 5 through).
+    struct ResolvedFloat
+    {
+        int  page = 0;
+        int  yTop = 0, yBottom = 0;
+        int  xLeft = 0, xRight = 0;
+        bool reflow = false;
+    };
+
+    // Widest free horizontal run in [0,usableW] at vertical band [y,y+h) on
+    // `page`, after removing the spans of reflowing floats that overlap the
+    // band. With no overlap this returns the full column, so a float-free
+    // document wraps exactly as before.
+    void FreeRun(const std::vector<ResolvedFloat>& floats, int page, int y, int h,
+                 int usableW, int& outL, int& outR)
+    {
+        outL = 0; outR = usableW;
+        // Collect blocked x-intervals.
+        std::vector<std::pair<int,int>> blocked;
+        for (const auto& f : floats)
+        {
+            if (!f.reflow || f.page != page) continue;
+            if (y >= f.yBottom || y + h <= f.yTop) continue;  // no vertical overlap
+            int bl = std::max(0, f.xLeft);
+            int br = std::min(usableW, f.xRight);
+            if (br > bl) blocked.emplace_back(bl, br);
+        }
+        if (blocked.empty()) return;
+        std::sort(blocked.begin(), blocked.end());
+        // Widest gap between blocked spans across [0, usableW].
+        int bestL = 0, bestW = 0, cursor = 0;
+        for (auto& b : blocked)
+        {
+            if (b.first - cursor > bestW) { bestW = b.first - cursor; bestL = cursor; }
+            cursor = std::max(cursor, b.second);
+        }
+        if (usableW - cursor > bestW) { bestW = usableW - cursor; bestL = cursor; }
+        if (bestW <= 0) return;            // fully blocked → fall back to full column
+        outL = bestL; outR = bestL + bestW;
+    }
+
+    struct ChunkResult { int endExcl; int nextCol; int height; };
+
+    // Wrap the next visual segment of `chars` starting at `startCol` into
+    // `availW` pixels. Mirrors WrapLinePixels' break decision (greedy, break at
+    // last whitespace, consume it) but returns just the first break so the
+    // layout sweep can re-query the available width per segment. Always places
+    // at least one character, so a narrow run never stalls.
+    ChunkResult WrapChunk(const std::vector<CharRender>& chars, int startCol,
+                          double availW, int emptyLineHeight)
+    {
+        const int n = static_cast<int>(chars.size());
+        if (startCol >= n) return { n, n, emptyLineHeight };
+        double xAccum = 0.0;
+        int    lastBreak = -1;
+        for (int c = startCol; c < n; ++c)
+        {
+            if (xAccum + chars[c].advanceSubpx > availW && c > startCol)
+            {
+                int breakAt = (lastBreak > startCol) ? lastBreak : c;
+                int nextCol = (breakAt == c) ? c : breakAt + 1;
+                int hh = 0;
+                for (int k = startCol; k < breakAt; ++k)
+                    if (chars[k].lineHeight > hh) hh = chars[k].lineHeight;
+                return { breakAt, nextCol, hh > 0 ? hh : emptyLineHeight };
+            }
+            xAccum += chars[c].advanceSubpx;
+            if (chars[c].ch == ' ' || chars[c].ch == '\t') lastBreak = c;
+        }
+        int hh = 0;
+        for (int k = startCol; k < n; ++k)
+            if (chars[k].lineHeight > hh) hh = chars[k].lineHeight;
+        return { n, n, hh > 0 ? hh : emptyLineHeight };
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +284,7 @@ namespace
 // ---------------------------------------------------------------------------
 
 WysiwygRenderer::WysiwygRenderer(SDL_Renderer* sdl, const Theme& theme)
-    : m_sdl(sdl), m_theme(theme)
+    : m_sdl(sdl), m_theme(theme), m_imageCache(sdl)
 {
 }
 
@@ -356,7 +381,18 @@ namespace
     {
         std::vector<std::vector<CharRender>>  chars;     // [line][col]
         std::vector<std::vector<LineSegment>> segments;  // [line][segIdx]
+        std::vector<ResolvedFloat>            floats;    // reflow exclusions, resolved during the sweep
         int defaultLineHeight = 16;
+    };
+
+    // Geometry the placement sweep needs (all pixels except dpi).
+    struct LayoutGeom
+    {
+        int dpi      = 96;
+        int usableW  = 1;
+        int usableH  = 1;
+        int mTop     = 0;
+        int mLeft    = 0;
     };
 }
 
@@ -365,15 +401,18 @@ static void BuildLayoutPass(LayoutPass& out,
                             const FormattedTextBuffer* fmt,
                             FontFace defaultFace, int defaultPointSize,
                             Color themeNormalText,
-                            int usableW,
+                            const LayoutGeom& geom,
+                            const std::vector<FloatObject>* floatObjs,
                             std::function<GlyphCache*(FontFace, int)> cacheFor,
                             std::function<double(FontFace, int, unsigned int)> subpxFor,
                             const std::vector<WysiwygRenderer::MisspelledSpan>* misspells = nullptr,
                             Color misspelledColor = Color{})
 {
+    const int usableW = geom.usableW;
     int n = buf.LineCount();
     out.chars.clear();
     out.segments.clear();
+    out.floats.clear();
     out.chars.resize(n);
     out.segments.resize(n);
 
@@ -443,7 +482,79 @@ static void BuildLayoutPass(LayoutPass& out,
             }
             out.chars[li].push_back(cr);
         }
-        out.segments[li] = WrapLinePixels(out.chars[li], usableW, out.defaultLineHeight);
+    }
+
+    // --- Placement sweep -------------------------------------------------
+    // Thread page/yInPage exactly the way every consumer re-paginates (greedy
+    // by segment height, honoring PageBreakBefore), so the placement stored
+    // here agrees with their walks. Floats are resolved when the sweep reaches
+    // their anchor row; reflowing floats (wrap 1/4/5) then narrow the
+    // available run for following lines. With no reflowing floats this
+    // reproduces the old per-line WrapLinePixels result exactly.
+    auto tw2px = [&](int tw) { return (tw * geom.dpi) / 1440; };
+    int curPage = 0;
+    int yInPage = 0;
+    for (int li = 0; li < n; ++li)
+    {
+        if (li > 0 && fmt && fmt->PageBreakBefore(li))
+        {
+            ++curPage;
+            yInPage = 0;
+        }
+
+        // Resolve floats anchored to this row into layout coordinates.
+        if (floatObjs)
+        {
+            for (const auto& f : *floatObjs)
+            {
+                if (f.anchorRow != li) continue;
+                ResolvedFloat rf;
+                rf.page = curPage;
+                int yOrigin = (f.vRef == FloatObject::VRef::Margin) ? 0
+                            : (f.vRef == FloatObject::VRef::Page)   ? -geom.mTop
+                            :  yInPage;                              // Paragraph
+                rf.yTop    = yOrigin + tw2px(f.top);
+                rf.yBottom = yOrigin + tw2px(f.bottom);
+                int xOrigin = (f.hRef == FloatObject::HRef::Page) ? -geom.mLeft : 0;
+                rf.xLeft   = xOrigin + tw2px(f.left);
+                rf.xRight  = xOrigin + tw2px(f.right);
+                rf.reflow  = (f.wrapType == 1 || f.wrapType == 4 || f.wrapType == 5);
+                out.floats.push_back(rf);
+            }
+        }
+
+        const auto& chars = out.chars[li];
+        const int nchars = static_cast<int>(chars.size());
+
+        if (nchars == 0)
+        {
+            // Empty paragraph: one zero-length, full-width segment.
+            int h = out.defaultLineHeight;
+            if (yInPage + h > geom.usableH && yInPage > 0) { ++curPage; yInPage = 0; }
+            out.segments[li].push_back({ 0, 0, h, curPage, yInPage, 0, usableW });
+            yInPage += h;
+            continue;
+        }
+
+        int col = 0;
+        while (col < nchars)
+        {
+            // Provisional height from the first char of the chunk drives the
+            // exclusion band; segments are single-font in the common case.
+            int provH = chars[col].lineHeight;
+            if (yInPage + provH > geom.usableH && yInPage > 0) { ++curPage; yInPage = 0; }
+
+            int xL, xR;
+            FreeRun(out.floats, curPage, yInPage, provH, usableW, xL, xR);
+            int availW = xR - xL;
+
+            ChunkResult ck = WrapChunk(chars, col, static_cast<double>(availW),
+                                       out.defaultLineHeight);
+            out.segments[li].push_back({ col, ck.endExcl, ck.height,
+                                         curPage, yInPage, xL, availW });
+            yInPage += ck.height;
+            col = ck.nextCol;
+        }
     }
 }
 
@@ -459,13 +570,19 @@ WysiwygRenderer::ComputeVisualLayout(const DrawContext& ctx)
     const int dpi = std::max(48, ctx.screenDpi);
 
     const int pageW   = static_cast<int>(kPaperWidthIn  * dpi);
-    const int mLeft   = static_cast<int>(ctx.margins.leftIn  * dpi);
-    const int mRight  = static_cast<int>(ctx.margins.rightIn * dpi);
+    const int pageH   = static_cast<int>(kPaperHeightIn * dpi);
+    const int mLeft   = static_cast<int>(ctx.margins.leftIn   * dpi);
+    const int mRight  = static_cast<int>(ctx.margins.rightIn  * dpi);
+    const int mTop    = static_cast<int>(ctx.margins.topIn    * dpi);
+    const int mBottom = static_cast<int>(ctx.margins.bottomIn * dpi);
     const int usableW = std::max(1, pageW - mLeft - mRight);
+    const int usableH = std::max(1, pageH - mTop  - mBottom);
 
     LayoutPass pass;
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
-                    ctx.face, ctx.pointSize, m_theme.normalText, usableW,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
                     [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
                     [&](FontFace f, int p, unsigned int cp) {
                         int px = std::max(1, (p * dpi + 36) / 72);
@@ -495,7 +612,7 @@ WysiwygRenderer::ComputeVisualLayout(const DrawContext& ctx)
             int    segSpaces = 0;
             MeasureSegment(chars, seg.startCol, seg.endCol,
                            segContentW, segTrimmedW, segSpaces);
-            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, usableW, align,
+            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, seg.width, align,
                                           s + 1 == segs.size(), segSpaces);
 
             // Sub-pixel accumulator rounded to int — matches the draw
@@ -533,8 +650,10 @@ int WysiwygRenderer::ClampScrollForCursor(const DrawContext& ctx)
     const int usableH  = std::max(1, pageH - mTop  - mBottom);
     const int pageStride = pageH + kPageGapPx;
 
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
-                    ctx.face, ctx.pointSize, m_theme.normalText, usableW,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
                     [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
                     [&](FontFace f, int p, unsigned int cp) {
                         int px = std::max(1, (p * dpi + 36) / 72);
@@ -628,8 +747,10 @@ int WysiwygRenderer::RowAtViewportTop(const DrawContext& ctx, int viewportTopPx)
     const int usableH  = std::max(1, pageH - mTop  - mBottom);
     const int pageStride = pageH + kPageGapPx;
 
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
-                    ctx.face, ctx.pointSize, m_theme.normalText, usableW,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
                     [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
                     [&](FontFace f, int p, unsigned int cp) {
                         int px = std::max(1, (p * dpi + 36) / 72);
@@ -691,8 +812,10 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
     const int pageStride = pageH + kPageGapPx;
 
     LayoutPass pass;
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
-                    ctx.face, ctx.pointSize, m_theme.normalText, usableW,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
                     [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
                     [&](FontFace f, int p, unsigned int cp) {
                         int px2 = std::max(1, (p * dpi + 36) / 72);
@@ -727,18 +850,11 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
         return segHi;
     };
 
-    int curPage = 0;
-    int yInPage = 0;
     int bestRow = 0, bestCol = 0;
     bool any = false;   // recorded a fallback (first segment processed)
 
     for (int li = 0; li < ctx.buffer->LineCount(); ++li)
     {
-        if (li > 0 && ctx.formatted && ctx.formatted->PageBreakBefore(li))
-        {
-            ++curPage;
-            yInPage = 0;
-        }
         const auto& chars = pass.chars[li];
         const auto& segs  = pass.segments[li];
         ParagraphAlign align = ctx.formatted ? ctx.formatted->Alignment(li)
@@ -746,20 +862,16 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
         for (size_t s = 0; s < segs.size(); ++s)
         {
             const auto& seg = segs[s];
-            int h = seg.height;
-            if (yInPage + h > usableH)
-            {
-                ++curPage;
-                yInPage = 0;
-            }
-            int textY = ctx.editorAreaPxY - viewport + curPage * pageStride
-                      + mTop + yInPage;
+            // Placement comes straight from the layout sweep (page/yInPage),
+            // and the segment's float-determined run (xOffset/width).
+            int textY = ctx.editorAreaPxY - viewport + seg.page * pageStride
+                      + mTop + seg.yInPage;
 
             double segContentW = 0.0, segTrimmedW = 0.0;
             int    segSpaces = 0;
             MeasureSegment(chars, seg.startCol, seg.endCol,
                            segContentW, segTrimmedW, segSpaces);
-            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, usableW, align,
+            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, seg.width, align,
                                           s + 1 == segs.size(), segSpaces);
 
             if (!any)
@@ -775,9 +887,8 @@ bool WysiwygRenderer::HitTest(const DrawContext& ctx, int px, int py,
                 // at/above the click is the line the user landed on (or below).
                 bestRow = li;
                 bestCol = columnForX(chars, seg.startCol, seg.endCol, px,
-                                     usableX + sa.xOffset, sa.spaceStretch);
+                                     usableX + seg.xOffset + sa.xOffset, sa.spaceStretch);
             }
-            yInPage += h;
         }
     }
 
@@ -814,8 +925,10 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
     if (!defaultCache || !defaultCache->IsValid()) return;
 
     LayoutPass pass;
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft };
+    const std::vector<FloatObject>* floatObjs = ctx.formatted ? &ctx.formatted->Floats() : nullptr;
     BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
-                    ctx.face, ctx.pointSize, m_theme.normalText, usableW,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, floatObjs,
                     [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
                     [&](FontFace f, int p, unsigned int cp) {
                         int px = std::max(1, (p * dpi + 36) / 72);
@@ -840,28 +953,37 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
     FillRect(m_sdl, ctx.editorAreaPxX, ctx.editorAreaPxY,
              ctx.editorAreaPxW, ctx.editorAreaPxH, m_theme.background);
 
-    // Pass A: paint page rectangles + margin guides. Need to know total
-    // pages first — walk segments greedily.
+    // Pass A: walk segments greedily to count pages AND record each row's
+    // first-segment position (page + y-in-page), which the float resolver
+    // needs to anchor a shape to its paragraph.
+    const int lineCount = ctx.buffer->LineCount();
+    std::vector<std::pair<int,int>> rowPagePos(static_cast<size_t>(std::max(0, lineCount)),
+                                               {0, 0});
     int totalPages = 1;
     {
+        int curPage = 0;
         int yInPage = 0;
-        for (int li = 0; li < ctx.buffer->LineCount(); ++li)
+        for (int li = 0; li < lineCount; ++li)
         {
             if (li > 0 && ctx.formatted && ctx.formatted->PageBreakBefore(li))
             {
-                ++totalPages;
+                ++curPage;
                 yInPage = 0;
             }
+            bool firstSeg = true;
             for (const auto& seg : pass.segments[li])
             {
                 if (yInPage + seg.height > usableH)
                 {
-                    ++totalPages;
+                    ++curPage;
                     yInPage = 0;
                 }
+                if (firstSeg) { rowPagePos[li] = { curPage, yInPage }; firstSeg = false; }
                 yInPage += seg.height;
             }
+            if (firstSeg) rowPagePos[li] = { curPage, yInPage };  // empty line
         }
+        totalPages = curPage + 1;
     }
 
     // Cache the layout metrics so the editor's WYSIWYG scrollbar can size
@@ -904,6 +1026,70 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             i = next;
         }
     };
+
+    // Resolve a float's on-screen pixel rect from its anchor row's page/pos.
+    auto tw2px = [&](int tw) { return (tw * dpi) / 1440; };
+    auto resolveFloat = [&](const FloatObject& f, int& x, int& y, int& w, int& h) {
+        int r     = std::clamp(f.anchorRow, 0, std::max(0, lineCount - 1));
+        int page  = rowPagePos.empty() ? 0 : rowPagePos[static_cast<size_t>(r)].first;
+        int yInPg = rowPagePos.empty() ? 0 : rowPagePos[static_cast<size_t>(r)].second;
+        int pageTopY = ctx.editorAreaPxY - viewport + page * pageStride;
+        // Column reference frame == Margin while there is a single column.
+        int originX = (f.hRef == FloatObject::HRef::Page) ? pageX : (pageX + mLeft);
+        int originY = pageTopY;                                   // Page
+        if (f.vRef == FloatObject::VRef::Margin)         originY = pageTopY + mTop;
+        else if (f.vRef == FloatObject::VRef::Paragraph) originY = pageTopY + mTop + yInPg;
+        x = originX + tw2px(f.left);
+        y = originY + tw2px(f.top);
+        w = tw2px(f.right - f.left);
+        h = tw2px(f.bottom - f.top);
+    };
+    auto drawFloat = [&](const FloatObject& f) {
+        int x, y, w, h;
+        resolveFloat(f, x, y, w, h);
+        if (w <= 0 || h <= 0) return;
+        if (f.kind == FloatObject::Kind::Image)
+        {
+            if (SDL_Texture* tex = m_imageCache.GetTexture(f.imageId, f.imageBytes))
+            {
+                SDL_FRect dst{ static_cast<float>(x), static_cast<float>(y),
+                               static_cast<float>(w), static_cast<float>(h) };
+                SDL_RenderTexture(m_sdl, tex, nullptr, &dst);
+            }
+            else
+            {
+                // Undecodable (e.g. a vector WMF): a dim placeholder so the
+                // reserved space is still visible.
+                FillRect  (m_sdl, x, y, w, h, mutedMargin);
+                StrokeRect(m_sdl, x, y, w, h, m_theme.border);
+            }
+            if (!f.caption.empty())
+            {
+                int cw = strWidth(f.caption);
+                drawStr(x + (w - cw) / 2, y + h + 2, f.caption, m_theme.dimText);
+            }
+        }
+        else  // Box
+        {
+            if (f.fillColor != CharFormat::Inherit && f.fillColor < Palette::kCount)
+                FillRect(m_sdl, x, y, w, h, Palette::ColorAt(f.fillColor));
+            Color line = (f.lineColor != CharFormat::Inherit && f.lineColor < Palette::kCount)
+                       ? Palette::ColorAt(f.lineColor) : m_theme.border;
+            StrokeRect(m_sdl, x, y, w, h, line);
+        }
+    };
+
+    // Partition floats into below-text (drawn under the body) and above-text
+    // (drawn over it), each ordered by z. Drawn around Pass B below.
+    std::vector<const FloatObject*> belowFloats, aboveFloats;
+    if (ctx.formatted)
+    {
+        for (const auto& f : ctx.formatted->Floats())
+            (f.belowText ? belowFloats : aboveFloats).push_back(&f);
+        auto byZ = [](const FloatObject* a, const FloatObject* b) { return a->zOrder < b->zOrder; };
+        std::stable_sort(belowFloats.begin(), belowFloats.end(), byZ);
+        std::stable_sort(aboveFloats.begin(), aboveFloats.end(), byZ);
+    }
 
     for (int p = 0; p < totalPages; ++p)
     {
@@ -949,6 +1135,9 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
         }
     }
 
+    // Floats that sit behind the text (drawn now, over the page rects).
+    for (const FloatObject* f : belowFloats) drawFloat(*f);
+
     // Selection range, normalized.
     int sr = 0, sc = 0, er = 0, ec = 0;
     if (ctx.selActive)
@@ -958,36 +1147,24 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
         if (sr > er || (sr == er && sc > ec)) { std::swap(sr, er); std::swap(sc, ec); }
     }
 
-    // Pass B: paint text segment-by-segment with greedy pagination.
-    int curPage = 0;
-    int yInPage = 0;
+    // Pass B: paint text segment-by-segment, using the placement (page,
+    // yInPage, xOffset, width) the layout sweep computed.
     for (int li = 0; li < ctx.buffer->LineCount(); ++li)
     {
         const auto& chars = pass.chars[li];
         const auto& segs  = pass.segments[li];
-        if (li > 0 && ctx.formatted && ctx.formatted->PageBreakBefore(li))
-        {
-            ++curPage;
-            yInPage = 0;
-        }
         for (size_t s = 0; s < segs.size(); ++s)
         {
             int h = segs[s].height;
-            if (yInPage + h > usableH)
-            {
-                ++curPage;
-                yInPage = 0;
-            }
-            int pageTopY = ctx.editorAreaPxY - viewport + curPage * pageStride;
-            int textY    = pageTopY + mTop + yInPage;
-            int usableX  = pageX + mLeft;
+            int pageTopY = ctx.editorAreaPxY - viewport + segs[s].page * pageStride;
+            int textY    = pageTopY + mTop + segs[s].yInPage;
+            // Segment's float-determined run; alignment shifts within it.
+            int usableX  = pageX + mLeft + segs[s].xOffset;
+            int segW     = segs[s].width;
 
             // Cull lines fully outside the editor area.
             if (textY + h < ctx.editorAreaPxY)
-            {
-                yInPage += h;
                 continue;
-            }
             if (textY > ctx.editorAreaPxY + ctx.editorAreaPxH) goto done;
 
             int segLo = segs[s].startCol;
@@ -1001,7 +1178,7 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             double segContentW = 0.0, segTrimmedW = 0.0;
             int    segSpaces   = 0;
             MeasureSegment(chars, segLo, segHi, segContentW, segTrimmedW, segSpaces);
-            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, usableW, align,
+            SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, segW, align,
                                           s + 1 == segs.size(), segSpaces);
             usableX += sa.xOffset;
 
@@ -1143,7 +1320,7 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
                         : SubpxAdvance(ctx.face,
                                        std::max(1, (ctx.pointSize * dpi + 36) / 72),
                                        static_cast<unsigned int>('M'));
-                    int margin = usableX + usableW;
+                    int margin = usableX + segW;
                     if (cx + static_cast<int>(advNext + 0.5) > margin)
                         cx = margin - 2;
                 }
@@ -1161,11 +1338,12 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
                 }
                 FillRect(m_sdl, cx, textY, 2, cursorPxH, m_theme.brightText);
             }
-
-            yInPage += h;
         }
     }
 done:
+
+    // Floats that sit in front of the text (drawn last).
+    for (const FloatObject* f : aboveFloats) drawFloat(*f);
 
     if (hadClip)
         SDL_SetRenderClipRect(m_sdl, &oldClip);

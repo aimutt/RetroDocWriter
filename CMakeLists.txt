@@ -24,6 +24,11 @@ endif()
 find_package(SDL3_ttf CONFIG REQUIRED
     PATHS "${CMAKE_CURRENT_SOURCE_DIR}/SDL_ttf/cmake" NO_DEFAULT_PATH)
 
+# SDL_image — vendored prebuilt VC binaries (SDL3_image-devel-3.2.4-VC), same
+# layout as SDL_ttf. Reuses the check_required_components stub defined above.
+find_package(SDL3_image CONFIG REQUIRED
+    PATHS "${CMAKE_CURRENT_SOURCE_DIR}/SDL_image/cmake" NO_DEFAULT_PATH)
+
 # Single-product layout: every .cpp lives under src/ with subdirectories
 # editor/, platform/, render/, ui/, app/. The src/ directory is the include
 # root so existing #include "editor/CharStyle.h" style paths resolve.
@@ -45,9 +50,11 @@ add_executable(RetroDocWriter
     src/editor/WordCount.cpp
     src/platform/AppData.cpp
     src/platform/Beep.cpp
+    src/platform/ImageDecode.cpp
     src/platform/Print.cpp
     src/platform/Window.cpp
     src/render/GlyphCache.cpp
+    src/render/ImageCache.cpp
     src/render/RetroRenderer.cpp
     src/render/ScreenBuffer.cpp
     src/render/Theme.cpp
@@ -61,6 +68,7 @@ target_include_directories(RetroDocWriter PRIVATE
 target_link_libraries(RetroDocWriter PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
     $<$<PLATFORM_ID:Windows>:Winmm>     # PlaySound, used by platform/Beep.cpp
     $<$<PLATFORM_ID:Windows>:Gdi32>     # CreateDC/TextOut/etc., used by platform/Print.cpp
     $<$<PLATFORM_ID:Windows>:Winspool>  # EnumPrinters/OpenPrinter/etc., used by platform/Print.cpp
@@ -83,6 +91,9 @@ add_custom_command(TARGET RetroDocWriter POST_BUILD
         $<TARGET_FILE_DIR:RetroDocWriter>
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:SDL3_ttf::SDL3_ttf>
+        $<TARGET_FILE_DIR:RetroDocWriter>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:SDL3_image::SDL3_image>
         $<TARGET_FILE_DIR:RetroDocWriter>
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets

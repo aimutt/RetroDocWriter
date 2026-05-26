@@ -44,6 +44,73 @@ namespace
         uint8_t changed = static_cast<uint8_t>(turnedOn | turnedOff);
         if (changed != 0) out += ' ';
     }
+
+    // Append raw bytes as lowercase hex, wrapped every 64 chars for tidiness
+    // (RTF readers ignore the newlines inside a \pict data run).
+    void EmitHex(std::string& out, const std::vector<uint8_t>& bytes)
+    {
+        static const char* H = "0123456789abcdef";
+        int col = 0;
+        for (uint8_t b : bytes)
+        {
+            out += H[b >> 4];
+            out += H[b & 0x0F];
+            if (++col >= 64) { out += '\n'; col = 0; }
+        }
+    }
+
+    // Emit one floating object as a Word-97 shape group:
+    //   {\shp{\*\shpinst <pos/wrap/z> <props> [\shptxt caption]}}
+    // Images carry shapeType 75 + a pib picture; boxes carry shapeType 1.
+    void EmitShape(std::string& out, const FloatObject& f)
+    {
+        char buf[96];
+        out += "{\\shp{\\*\\shpinst";
+        std::snprintf(buf, sizeof(buf),
+                      "\\shpleft%d\\shptop%d\\shpright%d\\shpbottom%d",
+                      f.left, f.top, f.right, f.bottom);
+        out += buf;
+        switch (f.hRef)
+        {
+            case FloatObject::HRef::Page:   out += "\\shpbxpage";   break;
+            case FloatObject::HRef::Margin: out += "\\shpbxmargin"; break;
+            case FloatObject::HRef::Column: out += "\\shpbxcolumn"; break;
+        }
+        switch (f.vRef)
+        {
+            case FloatObject::VRef::Page:      out += "\\shpbypage"; break;
+            case FloatObject::VRef::Margin:    out += "\\shpbymargin"; break;
+            case FloatObject::VRef::Paragraph: out += "\\shpbypara"; break;
+        }
+        std::snprintf(buf, sizeof(buf),
+                      "\\shpwr%d\\shpwrk%d\\shpz%d\\shpfblwtxt%d\n",
+                      f.wrapType, f.wrapSide, f.zOrder, f.belowText ? 1 : 0);
+        out += buf;
+
+        if (f.kind == FloatObject::Kind::Image && !f.imageBytes.empty())
+        {
+            out += "{\\sp{\\sn shapeType}{\\sv 75}}";
+            out += "{\\sp{\\sn pib}{\\sv {\\pict";
+            out += (f.isPng ? "\\pngblip" : "\\jpegblip");
+            std::snprintf(buf, sizeof(buf), "\\picwgoal%d\\pichgoal%d\n",
+                          f.widthTwips(), f.heightTwips());
+            out += buf;
+            EmitHex(out, f.imageBytes);
+            out += "}}}";   // close \pict, \sv, \sp
+        }
+        else
+        {
+            out += "{\\sp{\\sn shapeType}{\\sv 1}}";
+        }
+
+        if (!f.caption.empty())
+        {
+            out += "{\\shptxt ";
+            for (char ch : f.caption) EmitChar(out, ch);
+            out += "}";
+        }
+        out += "}}";        // close \*\shpinst, \shp
+    }
 }
 
 namespace RtfWriter
@@ -160,6 +227,10 @@ std::string Write(const FormattedTextBuffer& buf,
             }
             curAlign = wantAlign;
         }
+        // Floating shapes/images anchored to this paragraph are emitted at the
+        // start of its text; the reader re-anchors them to this same row.
+        for (const auto& f : buf.Floats())
+            if (f.anchorRow == row) EmitShape(out, f);
         const std::string& line = buf.Line(row);
         for (size_t c = 0; c < line.size(); ++c)
         {

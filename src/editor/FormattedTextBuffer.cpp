@@ -53,7 +53,36 @@ bool FormattedTextBuffer::HasAnyFormatting() const
         if (b) return true;
     for (uint8_t a : m_alignment)
         if (a != static_cast<uint8_t>(ParagraphAlign::Left)) return true;
+    if (!m_floats.empty()) return true;
     return false;
+}
+
+// --- Float anchor maintenance ---------------------------------------------
+
+void FormattedTextBuffer::ShiftAnchorsAtOrAfter(int firstRow, int delta)
+{
+    for (auto& f : m_floats)
+        if (f.anchorRow >= firstRow) f.anchorRow += delta;
+}
+
+void FormattedTextBuffer::MergeFloatAnchors(int removedRow, int mergeToRow)
+{
+    for (auto& f : m_floats)
+    {
+        if (f.anchorRow == removedRow)     f.anchorRow = mergeToRow;
+        else if (f.anchorRow > removedRow) f.anchorRow -= 1;
+    }
+}
+
+void FormattedTextBuffer::CollapseFloatAnchors(int startRow, int endRow)
+{
+    int removed = endRow - startRow;
+    if (removed <= 0) return;
+    for (auto& f : m_floats)
+    {
+        if (f.anchorRow > endRow)        f.anchorRow -= removed;
+        else if (f.anchorRow > startRow) f.anchorRow  = startRow;
+    }
 }
 
 void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
@@ -107,6 +136,7 @@ void FormattedTextBuffer::SetLinesPlain(std::vector<std::string> lines)
     m_pageBreakBefore.assign(lines.size(), false);
     m_alignment.assign(lines.size(),
                        static_cast<uint8_t>(ParagraphAlign::Left));
+    m_floats.clear();  // plain text carries no floating objects
     m_text.SetLines(std::move(lines));
 }
 
@@ -156,6 +186,7 @@ void FormattedTextBuffer::Backspace(int col, int row)
             m_pageBreakBefore.erase(m_pageBreakBefore.begin() + row);
         if (row < static_cast<int>(m_alignment.size()))
             m_alignment.erase(m_alignment.begin() + row);
+        MergeFloatAnchors(row, row - 1);
     }
 }
 
@@ -180,6 +211,7 @@ void FormattedTextBuffer::DeleteForward(int col, int row)
             m_pageBreakBefore.erase(m_pageBreakBefore.begin() + row + 1);
         if (row + 1 < static_cast<int>(m_alignment.size()))
             m_alignment.erase(m_alignment.begin() + row + 1);
+        MergeFloatAnchors(row + 1, row);
     }
 }
 
@@ -211,6 +243,8 @@ void FormattedTextBuffer::InsertNewline(int col, int row)
         m_alignment.insert(m_alignment.begin() + row + 1, inherit);
     else
         m_alignment.push_back(inherit);
+    // A float anchored at `row` stays on the upper half; rows below shift down.
+    ShiftAnchorsAtOrAfter(row + 1, 1);
 }
 
 void FormattedTextBuffer::InsertText(int col, int row, const std::string& text,
@@ -278,6 +312,7 @@ void FormattedTextBuffer::InsertText(int col, int row, const std::string& text,
                            : static_cast<uint8_t>(ParagraphAlign::Left);
     for (int i = 0; i < newRows; ++i)
         m_alignment.insert(m_alignment.begin() + row + 1, inheritAlign);
+    ShiftAnchorsAtOrAfter(row + 1, newRows);
 }
 
 void FormattedTextBuffer::DeleteRange(int startRow, int startCol,
@@ -324,6 +359,7 @@ void FormattedTextBuffer::DeleteRange(int startRow, int startCol,
     if (aEraseLo < aEraseHi)
         m_alignment.erase(m_alignment.begin() + aEraseLo,
                           m_alignment.begin() + aEraseHi);
+    CollapseFloatAnchors(startRow, endRow);
 }
 
 // ---------------------------------------------------------------------------
