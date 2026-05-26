@@ -98,6 +98,12 @@ public:
         bool        footerShowFilename   = false;
         bool        footerShowPageNumber = false;
         std::string documentName;
+
+        // Whole-document multi-column layout (\cols / \colsx). 1 = single
+        // column; the content area splits into this many equal columns with
+        // `columnGutterTwips` between them, text flowing column→column→page.
+        int         columnCount       = 1;
+        int         columnGutterTwips = 720;
     };
 
     void Draw(const DrawContext& ctx);

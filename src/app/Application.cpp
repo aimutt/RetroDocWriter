@@ -3990,6 +3990,11 @@ WysiwygRenderer::DrawContext Application::BuildWysiwygDrawContext() const
     ctx.footerShowFilename    = m_footerShowFilename;
     ctx.footerShowPageNumber  = m_footerShowPageNumber;
     ctx.documentName          = m_document ? m_document->DisplayName() : std::string();
+    if (m_document)
+    {
+        ctx.columnCount       = m_document->Buffer().ColumnCount();
+        ctx.columnGutterTwips = m_document->Buffer().ColumnGutterTwips();
+    }
     if (m_currentFace != CharFormat::Inherit
         && m_currentFace < static_cast<uint8_t>(FontFace::Count_))
         ctx.insertFace = static_cast<FontFace>(m_currentFace);

@@ -54,6 +54,7 @@ bool FormattedTextBuffer::HasAnyFormatting() const
     for (uint8_t a : m_alignment)
         if (a != static_cast<uint8_t>(ParagraphAlign::Left)) return true;
     if (!m_floats.empty()) return true;
+    if (m_columnCount != 1) return true;
     return false;
 }
 
@@ -137,6 +138,8 @@ void FormattedTextBuffer::SetLinesPlain(std::vector<std::string> lines)
     m_alignment.assign(lines.size(),
                        static_cast<uint8_t>(ParagraphAlign::Left));
     m_floats.clear();  // plain text carries no floating objects
+    m_columnCount       = 1;   // plain text is single-column
+    m_columnGutterTwips = 720;
     m_text.SetLines(std::move(lines));
 }
 
