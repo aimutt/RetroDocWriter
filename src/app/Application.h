@@ -46,6 +46,7 @@ enum class PromptMode
     PrintDialog,    // full print dialog (printer, copies, range, orientation, margins)
     MarginsDialog,  // WYSIWYG page margins (per-document)
     ColumnsDialog,  // whole-document column count + gutter (\cols / \colsx)
+    InsertImage,    // path-input prompt → embed a floating image (Insert > Image…)
     ConfirmSaveAsRtf, // Ctrl+S on a .txt that has formatting: Y = SaveAs.rtf, N = flatten + save .txt
 };
 
@@ -242,6 +243,11 @@ private:
     void MarginAdjustField(int dir);
     void MarginTextEdit(char ch);
     void MarginBackspace();
+
+    // Insert floating objects (Insert menu).
+    void StartInsertImagePrompt();                 // opens the path-input prompt
+    void InsertImageFromFile(const std::string& path);
+    void InsertShape();                            // inserts a default box float
 
     // Columns dialog (Page > Columns…) — count + gutter, tab-cycled like Margins.
     void OpenColumnsDialog();
