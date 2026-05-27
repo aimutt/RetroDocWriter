@@ -104,7 +104,18 @@ public:
         // `columnGutterTwips` between them, text flowing column→column→page.
         int         columnCount       = 1;
         int         columnGutterTwips = 720;
+
+        // Index into `formatted->Floats()` of the currently authored float, or
+        // -1. Draw paints corner resize handles on it.
+        int         selectedFloat     = -1;
     };
+
+    // Mouse hit-testing for float authoring. `index` is into the document's
+    // FloatObject vector (-1 = no float hit); `handle` says whether the body
+    // (move) or a corner (resize) was hit.
+    enum class FloatHandle { None, Body, TopLeft, TopRight, BottomLeft, BottomRight };
+    struct FloatHit { int index = -1; FloatHandle handle = FloatHandle::None; };
+    FloatHit HitTestFloat(const DrawContext& ctx, int px, int py);
 
     void Draw(const DrawContext& ctx);
 

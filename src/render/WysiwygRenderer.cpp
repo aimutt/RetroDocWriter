@@ -706,6 +706,72 @@ WysiwygRenderer::ComputePlacedSegments(const DrawContext& ctx)
     return out;
 }
 
+WysiwygRenderer::FloatHit WysiwygRenderer::HitTestFloat(const DrawContext& ctx, int px, int py)
+{
+    FloatHit miss;
+    if (!ctx.buffer || !ctx.formatted || ctx.formatted->Floats().empty()) return miss;
+    const int dpi = std::max(48, ctx.screenDpi);
+
+    const int pageW  = static_cast<int>(kPaperWidthIn  * dpi);
+    const int pageH  = static_cast<int>(kPaperHeightIn * dpi);
+    const int mTop   = static_cast<int>(ctx.margins.topIn    * dpi);
+    const int mBottom= static_cast<int>(ctx.margins.bottomIn * dpi);
+    const int mLeft  = static_cast<int>(ctx.margins.leftIn   * dpi);
+    const int mRight = static_cast<int>(ctx.margins.rightIn  * dpi);
+    const int usableW = std::max(1, pageW - mLeft - mRight);
+    const int usableH = std::max(1, pageH - mTop  - mBottom);
+    const int pageStride = pageH + kPageGapPx;
+
+    LayoutPass pass;
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
+    BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom,
+                    &ctx.formatted->Floats(),
+                    [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
+                    [&](FontFace f, int p, unsigned int cp) {
+                        int px2 = std::max(1, (p * dpi + 36) / 72);
+                        return SubpxAdvance(f, px2, cp);
+                    });
+
+    int pageX = ctx.editorAreaPxX + (ctx.editorAreaPxW - pageW) / 2;
+    if (pageX < ctx.editorAreaPxX) pageX = ctx.editorAreaPxX;
+    const int viewport = ctx.viewportTopPx;
+    const FloatObject* base = &ctx.formatted->Floats()[0];
+
+    // Topmost (highest-z) float first.
+    std::vector<const ResolvedFloat*> ordered;
+    for (const auto& rf : pass.floats) if (rf.obj) ordered.push_back(&rf);
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const ResolvedFloat* a, const ResolvedFloat* b) {
+                         return a->obj->zOrder > b->obj->zOrder;
+                     });
+
+    const int kHandle = 6;  // half-size of a corner grab square (px)
+    for (const ResolvedFloat* rf : ordered)
+    {
+        int x = pageX + mLeft + rf->xLeft;
+        int y = ctx.editorAreaPxY - viewport + rf->page * pageStride + mTop + rf->yTop;
+        int w = rf->xRight - rf->xLeft;
+        int h = rf->yBottom - rf->yTop;
+        if (w <= 0 || h <= 0) continue;
+        auto nearPt = [&](int cx, int cy) {
+            int adx = px > cx ? px - cx : cx - px;
+            int ady = py > cy ? py - cy : cy - py;
+            return adx <= kHandle && ady <= kHandle;
+        };
+        FloatHandle hnd = FloatHandle::None;
+        if      (nearPt(x,     y))     hnd = FloatHandle::TopLeft;
+        else if (nearPt(x + w, y))     hnd = FloatHandle::TopRight;
+        else if (nearPt(x,     y + h)) hnd = FloatHandle::BottomLeft;
+        else if (nearPt(x + w, y + h)) hnd = FloatHandle::BottomRight;
+        else if (px >= x && px <= x + w && py >= y && py <= y + h) hnd = FloatHandle::Body;
+        if (hnd != FloatHandle::None)
+            return FloatHit{ static_cast<int>(rf->obj - base), hnd };
+    }
+    return miss;
+}
+
 int WysiwygRenderer::ClampScrollForCursor(const DrawContext& ctx)
 {
     if (!ctx.buffer) return ctx.viewportTopPx;
@@ -1079,6 +1145,18 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             Color line = (f.lineColor != CharFormat::Inherit && f.lineColor < Palette::kCount)
                        ? Palette::ColorAt(f.lineColor) : m_theme.border;
             StrokeRect(m_sdl, x, y, w, h, line);
+        }
+        // Selection: outline + corner grab handles on the authored float.
+        if (ctx.selectedFloat >= 0 && rf.obj && ctx.formatted
+            && ctx.selectedFloat < static_cast<int>(ctx.formatted->Floats().size())
+            && rf.obj == &ctx.formatted->Floats()[static_cast<size_t>(ctx.selectedFloat)])
+        {
+            StrokeRect(m_sdl, x - 1, y - 1, w + 2, h + 2, m_theme.brightText);
+            const int hs = 5;  // grab-square size
+            int cx[2] = { x, x + w }, cy[2] = { y, y + h };
+            for (int i = 0; i < 2; ++i)
+                for (int j = 0; j < 2; ++j)
+                    FillRect(m_sdl, cx[i] - hs / 2, cy[j] - hs / 2, hs, hs, m_theme.brightText);
         }
     };
 
