@@ -6,8 +6,12 @@
 #include "platform/AppData.h"
 #include "platform/AssetPath.h"
 #include "platform/Beep.h"
+#include "platform/ImageDecode.h"
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <cctype>
+#include <fstream>
+#include <iterator>
 
 // Window starts at this size. Both dimensions track live drag-resizes after
 // startup; the screen-buffer column/row count is derived from current window
@@ -434,6 +438,7 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
             case SDL_SCANCODE_T: OpenMenu(6); return;   // Tools
             case SDL_SCANCODE_O: OpenMenu(7); return;   // Options
             case SDL_SCANCODE_H: OpenMenu(8); return;   // Help
+            case SDL_SCANCODE_I: OpenMenu(9); return;   // Insert
             default: return;
         }
     }
@@ -761,6 +766,7 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
         const bool isTextInput =
             m_promptMode == PromptMode::Open
          || m_promptMode == PromptMode::SaveAs
+         || m_promptMode == PromptMode::InsertImage
          || m_promptMode == PromptMode::Find
          || m_promptMode == PromptMode::AddWordDialog
          || m_promptMode == PromptMode::RemoveWordDialog
@@ -1738,6 +1744,7 @@ void Application::HandleTextInput(const char* text)
     {
         if (m_promptMode == PromptMode::Open            ||
             m_promptMode == PromptMode::SaveAs          ||
+            m_promptMode == PromptMode::InsertImage     ||
             m_promptMode == PromptMode::AddWordDialog   ||
             m_promptMode == PromptMode::RemoveWordDialog||
             m_promptMode == PromptMode::CheckWordDialog)
@@ -2366,6 +2373,11 @@ void Application::CommitPrompt()
                 : "'" + m_promptText + "' is NOT in the dictionary";
         }
     }
+    else if (mode == PromptMode::InsertImage)
+    {
+        if (!m_promptText.empty())
+            InsertImageFromFile(m_promptText);   // path used verbatim (not RTF-defaulted)
+    }
 
     m_promptText.clear();
 }
@@ -2600,6 +2612,15 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
             {
                 case 0: m_promptMode = PromptMode::HelpScreen;  break;
                 case 2: m_promptMode = PromptMode::AboutScreen; break;
+                default: break;
+            }
+            break;
+
+        case 9: // Insert
+            switch (itemIdx)
+            {
+                case 0: StartInsertImagePrompt(); break; // Image...
+                case 1: InsertShape();            break; // Shape...
                 default: break;
             }
             break;
@@ -3577,6 +3598,87 @@ void Application::MarginBackspace()
     if (!s.empty()) s.pop_back();
 }
 
+// --- Insert floating objects ----------------------------------------------
+
+void Application::StartInsertImagePrompt()
+{
+    m_promptMode = PromptMode::InsertImage;
+    m_promptText.clear();
+    m_statusMessage.clear();
+}
+
+void Application::InsertImageFromFile(const std::string& path)
+{
+    if (path.empty()) return;
+    std::ifstream file(path, std::ios::binary);
+    if (!file) { m_statusMessage = "Error: cannot open '" + path + "'"; return; }
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+    if (bytes.empty()) { m_statusMessage = "Error: empty image file"; return; }
+
+    // Decode once for the natural size and to confirm a supported raster format.
+    int iw = 0, ih = 0;
+    if (SDL_Surface* surf = ImageDecode::DecodeToSurface(bytes))
+    {
+        iw = surf->w; ih = surf->h;
+        SDL_DestroySurface(surf);
+    }
+    if (iw <= 0 || ih <= 0)
+    {
+        m_statusMessage = "Error: unsupported image (PNG/JPEG/BMP/GIF)";
+        return;
+    }
+
+    // Blip keyword from magic bytes (PNG = 89 50…, JPEG = FF D8…).
+    bool isPng  = (bytes.size() >= 2 && bytes[0] == 0x89 && bytes[1] == 0x50);
+    bool isJpeg = (bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8);
+
+    // Default box: cap width at 2.5" (treat px as 96 dpi), aspect-correct,
+    // at the left margin of the cursor's paragraph; text wraps to its right.
+    int wTw = std::clamp(iw * 1440 / 96, 720, 3600);
+    int hTw = static_cast<int>(static_cast<long long>(wTw) * ih / std::max(1, iw));
+
+    FloatObject f;
+    f.kind      = FloatObject::Kind::Image;
+    f.anchorRow = m_cursor.row;
+    f.left = 0; f.top = 0; f.right = wTw; f.bottom = hTw;
+    f.hRef = FloatObject::HRef::Margin;
+    f.vRef = FloatObject::VRef::Paragraph;
+    f.wrapType = 1; f.wrapSide = 0;        // square wrap, largest gap
+    f.imageBytes = std::move(bytes);
+    f.imageId    = NextFloatImageId();
+    f.isPng      = isPng || !isJpeg;        // default to pngblip for non-JPEG
+
+    PushUndoBeforeEdit();
+    m_document->Buffer().FloatsMutable().push_back(std::move(f));
+    m_document->MarkDirty();
+    m_needsRedraw = true;
+    UpdateWindowTitle();
+    m_statusMessage = "Image inserted";
+}
+
+void Application::InsertShape()
+{
+    // Default 2" × 1.5" bordered (unfilled) box at the cursor paragraph's
+    // left margin; text wraps to its right.
+    FloatObject f;
+    f.kind      = FloatObject::Kind::Box;
+    f.anchorRow = m_cursor.row;
+    f.left = 0; f.top = 0; f.right = 2880; f.bottom = 2160;  // 2" × 1.5"
+    f.hRef = FloatObject::HRef::Margin;
+    f.vRef = FloatObject::VRef::Paragraph;
+    f.wrapType = 1; f.wrapSide = 0;
+    f.fillColor = CharFormat::Inherit;      // no fill
+    f.lineColor = CharFormat::Inherit;      // theme border
+
+    PushUndoBeforeEdit();
+    m_document->Buffer().FloatsMutable().push_back(std::move(f));
+    m_document->MarkDirty();
+    m_needsRedraw = true;
+    UpdateWindowTitle();
+    m_statusMessage = "Shape inserted";
+}
+
 // --- Columns dialog --------------------------------------------------------
 // Field 0 = column count (integer 1..12), field 1 = gutter (inches).
 
@@ -3813,6 +3915,7 @@ void Application::Render()
     // bottom-of-screen prompt). Active only for text/confirm modes.
     uiState.dialogActive = (m_promptMode == PromptMode::Open             ||
                             m_promptMode == PromptMode::SaveAs           ||
+                            m_promptMode == PromptMode::InsertImage      ||
                             m_promptMode == PromptMode::Find             ||
                             m_promptMode == PromptMode::ConfirmExit      ||
                             m_promptMode == PromptMode::ConfirmExitClean ||
@@ -3841,6 +3944,11 @@ void Application::Render()
         case PromptMode::SaveAs:
             uiState.dialogTitle   = "Save As";
             uiState.dialogPrompt  = "File path (.rtf default):";
+            uiState.dialogPrompt2 = "";
+            break;
+        case PromptMode::InsertImage:
+            uiState.dialogTitle   = "Insert Image";
+            uiState.dialogPrompt  = "Image file path:";
             uiState.dialogPrompt2 = "";
             break;
         case PromptMode::Find:

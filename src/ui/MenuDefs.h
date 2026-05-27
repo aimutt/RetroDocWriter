@@ -17,10 +17,10 @@ struct MenuDef
 
 // Menu mnemonic characters (Alt+letter to open each menu)
 // Indices match GetMenuDefs() order:
-// File=0, Edit=1, Format=2, Search=3, View=4, Page=5, Tools=6, Options=7, Help=8
+// File=0, Edit=1, Format=2, Search=3, View=4, Page=5, Tools=6, Options=7, Help=8, Insert=9
 inline char GetMenuMnemonic(int menuIdx)
 {
-    static const char mnemonics[] = { 'f', 'e', 'r', 's', 'v', 'p', 't', 'o', 'h' };
+    static const char mnemonics[] = { 'f', 'e', 'r', 's', 'v', 'p', 't', 'o', 'h', 'i' };
     if (menuIdx < 0 || menuIdx >= static_cast<int>(sizeof(mnemonics)))
         return '\0';
     return mnemonics[menuIdx];
@@ -99,6 +99,11 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "Help",         "F1"   },
             { "",             ""     },
             { "About...",     ""     },
+        }},
+        // Appended last (index 9) so existing menu indices/barCols are unchanged.
+        { "Insert", 64, {
+            { "Image...",     ""     },
+            { "Shape...",     ""     },
         }},
     };
     return s_menus;
