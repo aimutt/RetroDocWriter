@@ -322,6 +322,19 @@ private:
     // Text-selection drag in the WYSIWYG body: armed on mousedown in the
     // editor, extends the selection on motion, released on mouseup.
     bool       m_textSelectDragActive      = false;
+
+    // Float authoring (Phase 5c). m_selectedFloat indexes the document's
+    // FloatObject vector (-1 = none); the renderer paints resize handles on
+    // it. The drag fields capture the gesture: which float, which handle
+    // (body=move, corner=resize), the start pixel, and the float's original
+    // twip rect so motion applies a delta against a stable baseline.
+    int          m_selectedFloat       = -1;
+    bool         m_floatDragActive     = false;
+    int          m_floatDragIndex      = -1;
+    WysiwygRenderer::FloatHandle m_floatDragHandle = WysiwygRenderer::FloatHandle::None;
+    int          m_floatDragStartPx    = 0;
+    int          m_floatDragStartPy    = 0;
+    int          m_floatDragL0 = 0, m_floatDragT0 = 0, m_floatDragR0 = 0, m_floatDragB0 = 0;
     int        m_scrollbarDragX            = 0;
     int        m_scrollbarDragY            = 0;
     int        m_scrollbarDragHeight       = 0;

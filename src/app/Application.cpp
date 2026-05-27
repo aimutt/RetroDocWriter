@@ -245,7 +245,8 @@ void Application::DispatchEvent(const SDL_Event& event)
                 m_promptMode == PromptMode::MenuBar
              || m_promptMode == PromptMode::MenuOpen
              || m_scrollbarDragActive
-             || m_textSelectDragActive;
+             || m_textSelectDragActive
+             || m_floatDragActive;
             if (needMotion)
             {
                 int cw = m_renderer ? m_renderer->CellWidth()  : 0;
@@ -440,6 +441,40 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
             case SDL_SCANCODE_H: OpenMenu(8); return;   // Help
             case SDL_SCANCODE_I: OpenMenu(9); return;   // Insert
             default: return;
+        }
+    }
+
+    // A selected float (image/box) intercepts keys: Delete/Backspace removes
+    // it, Esc deselects it, and any other key deselects then falls through to
+    // normal text editing — so the selection is short-lived and predictable.
+    if (m_selectedFloat >= 0)
+    {
+        auto& floats = m_document->Buffer().FloatsMutable();
+        if (m_selectedFloat >= static_cast<int>(floats.size()))
+        {
+            m_selectedFloat = -1;  // stale; fall through
+        }
+        else if (key.scancode == SDL_SCANCODE_DELETE
+              || key.scancode == SDL_SCANCODE_BACKSPACE)
+        {
+            PushUndoBeforeEdit();
+            floats.erase(floats.begin() + m_selectedFloat);
+            m_selectedFloat = -1;
+            m_document->MarkDirty();
+            UpdateWindowTitle();
+            m_needsRedraw = true;
+            return;
+        }
+        else if (key.scancode == SDL_SCANCODE_ESCAPE)
+        {
+            m_selectedFloat = -1;
+            m_needsRedraw = true;
+            return;
+        }
+        else
+        {
+            m_selectedFloat = -1;  // any other key: deselect, then edit
+            m_needsRedraw = true;
         }
     }
 
@@ -1527,10 +1562,37 @@ void Application::HandleMouseDown(int cellCol, int cellRow, int px, int py, Uint
              && cellCol < scrollbarX);
         if (inEditorBody)
         {
-            // Click in the document body → move the caret under the click and
-            // arm a drag so a subsequent motion extends the selection.
             WysiwygRenderer::DrawContext ctx = BuildWysiwygDrawContext();
             ctx.viewportTopPx = m_wysiwygScrollPx;
+
+            // A float (image/box) takes priority over the text caret: clicking
+            // it selects it (showing resize handles) and arms a move/resize
+            // drag. One undo step per gesture is pushed up front.
+            WysiwygRenderer::FloatHit fh = m_wysiwyg->HitTestFloat(ctx, px, py);
+            if (fh.index >= 0)
+            {
+                m_selectedFloat   = fh.index;
+                m_floatDragActive = true;
+                m_floatDragIndex  = fh.index;
+                m_floatDragHandle = fh.handle;
+                m_floatDragStartPx = px;
+                m_floatDragStartPy = py;
+                const auto& floats = m_document->Buffer().Floats();
+                if (fh.index < static_cast<int>(floats.size()))
+                {
+                    const FloatObject& fo = floats[static_cast<size_t>(fh.index)];
+                    m_floatDragL0 = fo.left;  m_floatDragT0 = fo.top;
+                    m_floatDragR0 = fo.right; m_floatDragB0 = fo.bottom;
+                }
+                PushUndoBeforeEdit();
+                m_needsRedraw = true;
+                return;
+            }
+            // Empty space / text → drop any float selection.
+            if (m_selectedFloat != -1) { m_selectedFloat = -1; m_needsRedraw = true; }
+
+            // Click in the document body → move the caret under the click and
+            // arm a drag so a subsequent motion extends the selection.
             int row = 0, col = 0;
             if (m_wysiwyg->HitTest(ctx, px, py, row, col))
             {
@@ -1599,6 +1661,12 @@ void Application::HandleMouseUp(int /*cellCol*/, int /*cellRow*/,
                                int /*px*/, int /*py*/, Uint8 button)
 {
     if (button != SDL_BUTTON_LEFT) return;
+    if (m_floatDragActive)
+    {
+        m_floatDragActive = false;
+        m_floatDragIndex  = -1;
+        m_floatDragHandle = WysiwygRenderer::FloatHandle::None;
+    }
     if (m_scrollbarDragActive)
     {
         m_scrollbarDragActive = false;
@@ -1616,6 +1684,62 @@ void Application::HandleMouseUp(int /*cellCol*/, int /*cellRow*/,
 
 void Application::HandleMouseMotion(int cellCol, int cellRow, int px, int py)
 {
+    // Float move/resize drag — convert the pixel delta from mousedown into a
+    // twip delta and apply it to the float's rect per the grabbed handle. Body
+    // moves all four edges; a corner moves its two edges (clamped to a minimum
+    // size). Edits write straight into the live FloatObject; the undo step was
+    // pushed on mousedown so the whole gesture is one undo.
+    if (m_floatDragActive)
+    {
+        if (m_promptMode != PromptMode::None || !m_wysiwyg || m_floatDragIndex < 0)
+        {
+            m_floatDragActive = false;
+            return;
+        }
+        auto& floats = m_document->Buffer().FloatsMutable();
+        if (m_floatDragIndex >= static_cast<int>(floats.size()))
+        {
+            m_floatDragActive = false;
+            return;
+        }
+        const int dpi = BuildWysiwygDrawContext().screenDpi;  // 96
+        const int dx  = (px - m_floatDragStartPx) * 1440 / std::max(1, dpi);
+        const int dy  = (py - m_floatDragStartPy) * 1440 / std::max(1, dpi);
+        const int kMin = 360;  // 0.25" minimum width/height (twips)
+
+        FloatObject& f = floats[static_cast<size_t>(m_floatDragIndex)];
+        using H = WysiwygRenderer::FloatHandle;
+        switch (m_floatDragHandle)
+        {
+            case H::Body:
+                f.left = m_floatDragL0 + dx; f.right  = m_floatDragR0 + dx;
+                f.top  = m_floatDragT0 + dy; f.bottom = m_floatDragB0 + dy;
+                break;
+            case H::TopLeft:
+                f.left = std::min(m_floatDragL0 + dx, m_floatDragR0 - kMin);
+                f.top  = std::min(m_floatDragT0 + dy, m_floatDragB0 - kMin);
+                break;
+            case H::TopRight:
+                f.right = std::max(m_floatDragR0 + dx, m_floatDragL0 + kMin);
+                f.top   = std::min(m_floatDragT0 + dy, m_floatDragB0 - kMin);
+                break;
+            case H::BottomLeft:
+                f.left   = std::min(m_floatDragL0 + dx, m_floatDragR0 - kMin);
+                f.bottom = std::max(m_floatDragB0 + dy, m_floatDragT0 + kMin);
+                break;
+            case H::BottomRight:
+                f.right  = std::max(m_floatDragR0 + dx, m_floatDragL0 + kMin);
+                f.bottom = std::max(m_floatDragB0 + dy, m_floatDragT0 + kMin);
+                break;
+            default:
+                break;
+        }
+        m_document->MarkDirty();
+        UpdateWindowTitle();
+        m_needsRedraw = true;
+        return;
+    }
+
     // Text-selection drag in the document body — extend the selection by
     // moving the live cursor end to the glyph under the pointer (the anchor
     // set on mousedown stays put).
@@ -3651,6 +3775,7 @@ void Application::InsertImageFromFile(const std::string& path)
 
     PushUndoBeforeEdit();
     m_document->Buffer().FloatsMutable().push_back(std::move(f));
+    m_selectedFloat = static_cast<int>(m_document->Buffer().Floats().size()) - 1;
     m_document->MarkDirty();
     m_needsRedraw = true;
     UpdateWindowTitle();
@@ -3673,6 +3798,7 @@ void Application::InsertShape()
 
     PushUndoBeforeEdit();
     m_document->Buffer().FloatsMutable().push_back(std::move(f));
+    m_selectedFloat = static_cast<int>(m_document->Buffer().Floats().size()) - 1;
     m_document->MarkDirty();
     m_needsRedraw = true;
     UpdateWindowTitle();
@@ -4239,6 +4365,11 @@ WysiwygRenderer::DrawContext Application::BuildWysiwygDrawContext() const
     {
         ctx.columnCount       = m_document->Buffer().ColumnCount();
         ctx.columnGutterTwips = m_document->Buffer().ColumnGutterTwips();
+        // Only flag a still-valid selection (a float deleted out from under
+        // the index would otherwise paint handles on the wrong object).
+        if (m_selectedFloat >= 0
+            && m_selectedFloat < static_cast<int>(m_document->Buffer().Floats().size()))
+            ctx.selectedFloat = m_selectedFloat;
     }
     if (m_currentFace != CharFormat::Inherit
         && m_currentFace < static_cast<uint8_t>(FontFace::Count_))
