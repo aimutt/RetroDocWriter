@@ -3,6 +3,7 @@
 #include "MenuDefs.h"
 #include "render/ScreenBuffer.h"
 #include "render/Theme.h"
+#include "editor/HeaderFooter.h"
 #include "editor/TextBuffer.h"
 #include <cstdint>
 #include <string>
@@ -93,12 +94,16 @@ struct EditorUiState
     // page. Defaults to true so the menu's "On/Off" indicator matches the
     // app's default-on behavior.
     bool showMargins         = true;
-    // Per-document header/footer slots: file name + page number in the top
-    // header and/or bottom footer. Drive the four Page-menu On/Off labels.
-    bool headerShowFilename   = false;
-    bool headerShowPageNumber = false;
-    bool footerShowFilename   = false;
-    bool footerShowPageNumber = false;
+    // Page > Header / Footer dialog. The dialog renders the current live
+    // state of both bands (so any in-progress edit is visible immediately).
+    bool             headerFooterDialogActive = false;
+    int              hfFocusIdx               = 0;       // 0..5 = H.L/C/R, F.L/C/R
+    HeaderFooterBand headerBand;
+    HeaderFooterBand footerBand;
+    // Context-dependent menu gating. True iff a float image is currently
+    // selected so the Insert > Caption... item is meaningful. Mirrored into
+    // IsMenuItemEnabled at draw/hit/keyboard-nav time.
+    bool insertCaptionEnabled = false;
     struct MisspelledSpan { int row; int col; int len; };
     std::vector<MisspelledSpan> misspelledSpans;
 
@@ -121,6 +126,12 @@ struct EditorUiState
     bool        columnsDialogActive = false;
     std::string columnsEditText[2];         // count, gutter (inches)
     int         columnsFocusIdx     = 0;
+    // Insert Image dialog (Path / Caption / Padding inches).
+    bool        insertImageDialogActive = false;
+    std::string insertImagePathText;
+    std::string insertImageCaptionText;
+    std::string insertImagePaddingText;
+    int         insertImageFocusIdx = 0;     // 0=Path, 1=Caption, 2=Padding
 
     // Current per-character style applied to next-typed input (Format menu /
     // Ctrl+B/I/U). Reflected in the status-bar B/I/U/S indicators. CharStyle
@@ -157,8 +168,7 @@ public:
                             bool wordWrap, bool showWordCount,
                             bool spellCheckEnabled, bool highlightMisspelled,
                             bool showMargins,
-                            bool headerShowFilename, bool headerShowPageNumber,
-                            bool footerShowFilename, bool footerShowPageNumber) const;
+                            bool insertCaptionEnabled) const;
 
     // Dialog hit-testing.
     // Each dialog has its own geometry, so each gets a dedicated hit-tester
@@ -255,6 +265,19 @@ public:
     ColumnsHit HitTestColumnsDialog(int cellCol, int cellRow, int screenColumns) const;
     Rect       ColumnsDialogRect   (int screenColumns) const;
 
+    enum class InsertImageHit { None, Path, Caption, Padding, OkHint, CancelHint };
+    InsertImageHit HitTestInsertImageDialog(int cellCol, int cellRow, int screenColumns) const;
+    Rect           InsertImageDialogRect   (int screenColumns) const;
+
+    // Header / Footer dialog — 6 rows (Header L/C/R, Footer L/C/R). Clicking a
+    // row focuses it; the row-internal Kind/Format chips and Text field are
+    // edited via keyboard (Space cycles Kind, Up/Dn cycles Format, type to
+    // edit text).
+    enum class HeaderFooterHit { None, Row, OkHint, CancelHint };
+    struct HeaderFooterClick { HeaderFooterHit hit = HeaderFooterHit::None; int row = -1; };
+    HeaderFooterClick HitTestHeaderFooterDialog(int cellCol, int cellRow, int screenColumns) const;
+    Rect              HeaderFooterDialogRect   (int screenColumns) const;
+
 private:
     const Theme& m_theme;
     Layout       m_layout;
@@ -295,6 +318,8 @@ private:
     void DrawPrintDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawMarginsDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawColumnsDialog(ScreenBuffer& buffer, const EditorUiState& state);
+    void DrawInsertImageDialog(ScreenBuffer& buffer, const EditorUiState& state);
+    void DrawHeaderFooterDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawBox(ScreenBuffer& buffer, int x, int y, int w, int h, Color fg, Color bg);
 
     // Reusable vertical scrollbar. Fills `height` cells starting at (x, y)

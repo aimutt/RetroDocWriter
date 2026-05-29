@@ -318,6 +318,18 @@ namespace
                 if (word == "shpwrk"     && hasParam) { curShape.wrapSide  = param;       return true; }
                 if (word == "shpz"       && hasParam) { curShape.zOrder    = param;       return true; }
                 if (word == "shpfblwtxt" && hasParam) { curShape.belowText = (param != 0); return true; }
+                // Text-distance ("padding") from each edge — RtfWriter emits
+                // the same value on all four. On read, take the max so a
+                // foreign asymmetric source still produces a sensible
+                // isotropic padding.
+                if (word == "dxTextLeft"   && hasParam)
+                { curShape.textDistanceTwips = std::max(curShape.textDistanceTwips, param); return true; }
+                if (word == "dyTextTop"    && hasParam)
+                { curShape.textDistanceTwips = std::max(curShape.textDistanceTwips, param); return true; }
+                if (word == "dxTextRight"  && hasParam)
+                { curShape.textDistanceTwips = std::max(curShape.textDistanceTwips, param); return true; }
+                if (word == "dyTextBottom" && hasParam)
+                { curShape.textDistanceTwips = std::max(curShape.textDistanceTwips, param); return true; }
                 if (word == "pict")     { pictBraceDepth = braceDepth; pictHex.clear(); return true; }
                 if (word == "pngblip")  { curShape.isPng = true;  return true; }
                 if (word == "jpegblip") { curShape.isPng = false; return true; }

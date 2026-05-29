@@ -1,6 +1,7 @@
 #pragma once
 #include "editor/CharStyle.h"
 #include "editor/FloatObject.h"
+#include "editor/HeaderFooter.h"
 #include "render/PlacedSegment.h"
 #include <string>
 #include <vector>
@@ -57,13 +58,13 @@ struct PrintRequest
     // every paragraph left-aligned.
     const std::vector<uint8_t>* alignment = nullptr;
 
-    // Four independent header/footer slots: file name (left) and page number
-    // (right) in the top-margin header and/or bottom-margin footer. All
-    // default off; matches the on-screen WysiwygRenderer so print is WYSIWYG.
-    bool headerShowFilename   = false;
-    bool headerShowPageNumber = false;
-    bool footerShowFilename   = false;
-    bool footerShowPageNumber = false;
+    // Per-document header/footer bands. Each band has three independent
+    // sub-slots (left/center/right) drawing custom text, filename, the page
+    // number in one of four formats, or today's date. All default to "None"
+    // so nothing prints unless asked. Matches the on-screen renderer so
+    // print is WYSIWYG.
+    HeaderFooterBand header;
+    HeaderFooterBand footer;
 
     // Optional floating shapes/images, anchored to buffer rows. The formatted
     // print path draws each at its resolved page position (z-ordered around

@@ -46,6 +46,14 @@ struct FloatObject
     // Optional caption drawn beneath an image.
     std::string caption;
 
+    // Extra distance (twips) text holds off from every edge of the float
+    // — the user-visible "padding" knob in the Insert Image dialog. Stored
+    // isotropic: the layout pass applies the same value to all four sides
+    // when computing the wrap-exclusion rect. RTF round-trips it as the
+    // four \dxText* / \dyText* control words (max is taken on read if a
+    // foreign file specifies them asymmetrically).
+    int textDistanceTwips = 0;
+
     int  widthTwips()  const { return right - left; }
     int  heightTwips() const { return bottom - top; }
 };

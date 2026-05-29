@@ -202,16 +202,19 @@ namespace
     // A float resolved into layout (page-content) coordinates. [yTop,yBottom)
     // is the image/box DRAW rect; [xLeft,xRight) its horizontal span — both
     // measured from the content top / usableX (so they already include the
-    // active column's x-base). `exclBottom` is yBottom plus any caption band,
-    // used for the text-reflow exclusion. `reflow` is true only for wrap types
-    // that push text aside (1 square / 4 tight / 5 through). `obj` points at
-    // the source FloatObject so the draw paths can read its image/box/caption.
+    // active column's x-base). The [exclLeft,exclTop,exclRight,exclBottom)
+    // rect is the text-reflow exclusion: starts at the draw rect, then is
+    // grown on all four sides by the float's `textDistanceTwips` padding,
+    // and finally the bottom is grown again by one line for an image with a
+    // caption. `reflow` is true only for wrap types that push text aside
+    // (1 square / 4 tight / 5 through). `obj` points at the source
+    // FloatObject so the draw paths can read its image/box/caption.
     struct ResolvedFloat
     {
         const FloatObject* obj = nullptr;
         int  page = 0;
         int  yTop = 0, yBottom = 0;
-        int  exclBottom = 0;
+        int  exclLeft = 0, exclTop = 0, exclRight = 0, exclBottom = 0;
         int  xLeft = 0, xRight = 0;
         bool reflow = false;
     };
@@ -230,9 +233,9 @@ namespace
         for (const auto& f : floats)
         {
             if (!f.reflow || f.page != page) continue;
-            if (y >= f.exclBottom || y + h <= f.yTop) continue;  // no vertical overlap
-            int bl = std::max(colLeft, f.xLeft);
-            int br = std::min(colRight, f.xRight);
+            if (y >= f.exclBottom || y + h <= f.exclTop) continue;  // no vertical overlap
+            int bl = std::max(colLeft, f.exclLeft);
+            int br = std::min(colRight, f.exclRight);
             if (br > bl) blocked.emplace_back(bl, br);
         }
         if (blocked.empty()) return;
@@ -541,16 +544,21 @@ static void BuildLayoutPass(LayoutPass& out,
                             :  yInPage;                              // Paragraph
                 rf.yTop    = yOrigin + tw2px(f.top);
                 rf.yBottom = yOrigin + tw2px(f.bottom);
-                // Caption is drawn just below the picture; extend the reflow
-                // exclusion (not the draw box) so text never lands on it.
-                rf.exclBottom = rf.yBottom;
-                if (f.kind == FloatObject::Kind::Image && !f.caption.empty())
-                    rf.exclBottom += out.defaultLineHeight + 2;
                 int xOrigin = (f.hRef == FloatObject::HRef::Page)   ? -geom.mLeft
                             : (f.hRef == FloatObject::HRef::Column)  ? activeColLeft
                             :  0;                                    // Margin
                 rf.xLeft   = xOrigin + tw2px(f.left);
                 rf.xRight  = xOrigin + tw2px(f.right);
+                // Exclusion rect: draw rect inflated by isotropic padding on
+                // all four sides, then bottom extended one extra line for an
+                // image caption (so text never wraps onto the caption band).
+                const int padPx = tw2px(f.textDistanceTwips);
+                rf.exclLeft   = rf.xLeft   - padPx;
+                rf.exclTop    = rf.yTop    - padPx;
+                rf.exclRight  = rf.xRight  + padPx;
+                rf.exclBottom = rf.yBottom + padPx;
+                if (f.kind == FloatObject::Kind::Image && !f.caption.empty())
+                    rf.exclBottom += out.defaultLineHeight + 2;
                 rf.reflow  = (f.wrapType == 1 || f.wrapType == 4 || f.wrapType == 5);
                 out.floats.push_back(rf);
             }
@@ -1227,34 +1235,41 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             StrokeRect(m_sdl, pageX + mLeft, pageTopY + mTop, usableW, usableH,
                        mutedMargin);
 
-        // Optional header (top margin) and footer (bottom margin): file name
-        // left, "Page N of M" right, each slot drawn only if its flag is set.
-        // Both sit in the margins, so they never steal from the text area —
-        // pagination is unaffected. Mirrors Print.cpp.
+        // Optional header (top margin) and footer (bottom margin): each band
+        // has three independent sub-slots (Left / Center / Right) drawn at
+        // the same y. Both sit in the margins so they never steal from the
+        // text area — pagination is unaffected. Mirrors Print.cpp.
         {
-            const int lineH   = defaultCache->LineHeight();
-            std::string pageStr = "Page " + std::to_string(p + 1)
-                                + " of "  + std::to_string(totalPages);
-            // Draw one band's slots at the given y.
-            auto drawBand = [&](int y, bool showName, bool showPage) {
-                if (showName && !ctx.documentName.empty())
-                    drawStr(pageX + mLeft, y, ctx.documentName, m_theme.dimText);
-                if (showPage)
+            const int lineH = defaultCache->LineHeight();
+            // Resolve and place one band at vertical position y.
+            auto drawBand = [&](int y, const HeaderFooterBand& band) {
+                if (!band.AnyActive()) return;
+                for (int slotIdx = 0; slotIdx < 3; ++slotIdx)
                 {
-                    int rightX = pageX + pageW - mRight - strWidth(pageStr);
-                    drawStr(rightX, y, pageStr, m_theme.dimText);
+                    std::string s = ResolveHeaderFooterSlot(
+                        band.slots[static_cast<size_t>(slotIdx)],
+                        p + 1, totalPages, ctx.documentName);
+                    if (s.empty()) continue;
+                    int x;
+                    if (slotIdx == 0)            // Left
+                        x = pageX + mLeft;
+                    else if (slotIdx == 1)       // Center
+                        x = pageX + mLeft + (usableW - strWidth(s)) / 2;
+                    else                          // Right
+                        x = pageX + pageW - mRight - strWidth(s);
+                    drawStr(x, y, s, m_theme.dimText);
                 }
             };
-            if (ctx.headerShowFilename || ctx.headerShowPageNumber)
+            if (ctx.header.AnyActive())
             {
                 int headerY = pageTopY + std::max(0, (mTop - lineH) / 2);
-                drawBand(headerY, ctx.headerShowFilename, ctx.headerShowPageNumber);
+                drawBand(headerY, ctx.header);
             }
-            if (ctx.footerShowFilename || ctx.footerShowPageNumber)
+            if (ctx.footer.AnyActive())
             {
                 int bandTop = pageTopY + pageH - mBottom;
                 int footerY = bandTop + std::max(0, (mBottom - lineH) / 2);
-                drawBand(footerY, ctx.footerShowFilename, ctx.footerShowPageNumber);
+                drawBand(footerY, ctx.footer);
             }
         }
     }
