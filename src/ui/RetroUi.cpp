@@ -1098,13 +1098,16 @@ void RetroUi::DrawPrintDialog(ScreenBuffer& buffer, const EditorUiState& state)
         // Fill interior with bg color (focused or not)
         for (int c = 1; c < width - 1; ++c)
             buffer.PutChar(x + col + c, y + row, U' ', tfg, tbg);
-        // Right-align text inside the brackets
+        // Right-align text inside the brackets. On overflow, show the
+        // rightmost slice so a freshly-typed digit always lands visibly
+        // (matches DrawMarginsDialog / DrawInsertImageDialog).
         int inner    = width - 2;
         int textCols = std::min(static_cast<int>(text.size()), inner);
+        int srcStart = static_cast<int>(text.size()) - textCols;
         int startC   = col + 1 + (inner - textCols);
         for (int i = 0; i < textCols; ++i)
             buffer.PutChar(x + startC + i, y + row,
-                           static_cast<char32_t>(static_cast<unsigned char>(text[i])),
+                           static_cast<char32_t>(static_cast<unsigned char>(text[srcStart + i])),
                            tfg, tbg);
     };
 
@@ -1271,9 +1274,9 @@ RetroUi::PrintHit RetroUi::HitTestPrintDialog(int cellCol, int cellRow, int scre
 
 namespace
 {
-    constexpr int kMarginsW = 50;
+    constexpr int kMarginsW = 56;
     constexpr int kMarginsH = 9;
-    const char* const kMarginsHint = "[Tab] Next  [Enter] OK  [Esc] Cancel";
+    const char* const kMarginsHint = "[Tab] Next  [Up/Dn] Adjust  [Enter] OK  [Esc] Cancel";
 
     constexpr int kColumnsW = 46;
     constexpr int kColumnsH = 7;
@@ -1313,10 +1316,14 @@ void RetroUi::DrawMarginsDialog(ScreenBuffer& buffer, const EditorUiState& state
             buffer.PutChar(x + col + c, y + row, U' ', tfg, tbg);
         int inner    = width - 2;
         int textCols = std::min(static_cast<int>(text.size()), inner);
+        // Show the rightmost slice on overflow so a freshly-typed digit
+        // always lands visibly in the field (rather than disappearing past
+        // the right border — what made digit input look broken).
+        int srcStart = static_cast<int>(text.size()) - textCols;
         int startC   = col + 1 + (inner - textCols);
         for (int i = 0; i < textCols; ++i)
             buffer.PutChar(x + startC + i, y + row,
-                           static_cast<char32_t>(static_cast<unsigned char>(text[i])),
+                           static_cast<char32_t>(static_cast<unsigned char>(text[srcStart + i])),
                            tfg, tbg);
     };
 
