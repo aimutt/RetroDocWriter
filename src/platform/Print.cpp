@@ -426,18 +426,23 @@ std::string PrintDocument(const TextBuffer& buffer, const PrintRequest& req)
 
     auto emitFooter = [&](int pageNum) {
         // Plain-text path (unused by RDW, which always sends formats). Honor
-        // the footer slots; header slots aren't drawn here.
-        if (!req.footerShowFilename && !req.footerShowPageNumber) return;
-        if (req.footerShowFilename)
-            TextOutA(hdc, usableLeft, footerY,
-                     docName.c_str(), static_cast<int>(docName.size()));
-        if (req.footerShowPageNumber)
+        // each footer sub-slot using the shared resolver so the band model
+        // matches the formatted path.
+        if (!req.footer.AnyActive()) return;
+        const int usableW = usableRight - usableLeft;
+        for (int slotIdx = 0; slotIdx < 3; ++slotIdx)
         {
-            std::string right = "Page " + std::to_string(pageNum) + " of " + std::to_string(totalPagesAll);
-            SIZE rs{};
-            GetTextExtentPoint32A(hdc, right.c_str(), static_cast<int>(right.size()), &rs);
-            TextOutA(hdc, usableRight - rs.cx, footerY,
-                     right.c_str(), static_cast<int>(right.size()));
+            std::string s = ResolveHeaderFooterSlot(
+                req.footer.slots[static_cast<size_t>(slotIdx)],
+                pageNum, totalPagesAll, docName);
+            if (s.empty()) continue;
+            SIZE sz{};
+            GetTextExtentPoint32A(hdc, s.c_str(),
+                                  static_cast<int>(s.size()), &sz);
+            int x = (slotIdx == 0) ? usableLeft
+                  : (slotIdx == 1) ? usableLeft + (usableW - sz.cx) / 2
+                                   : usableRight - sz.cx;
+            TextOutA(hdc, x, footerY, s.c_str(), static_cast<int>(s.size()));
         }
     };
 
@@ -932,36 +937,42 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
     int pagesEmitted = 0;
     int activePage   = -1;
 
-    // Draw one margin band's slots (file name left, page number right) at y.
-    auto emitBand = [&](int pageNum, int y, bool showName, bool showPage) {
+    // Draw one band's three sub-slots (Left / Center / Right) at y, resolving
+    // each per the shared HeaderFooter helper so screen and print agree.
+    auto emitBand = [&](int pageNum, int y, const HeaderFooterBand& band) {
+        if (!band.AnyActive()) return;
         SelectObject(hdc, defaultFont);
-        if (showName)
-            TextOutA(hdc, usableLeft, y, docName.c_str(),
-                     static_cast<int>(docName.size()));
-        if (showPage)
+        const int usableW = usableRight - usableLeft;
+        for (int slotIdx = 0; slotIdx < 3; ++slotIdx)
         {
-            std::string right = "Page " + std::to_string(pageNum)
-                              + " of "  + std::to_string(totalPages);
-            SIZE rs{};
-            GetTextExtentPoint32A(hdc, right.c_str(), static_cast<int>(right.size()), &rs);
-            TextOutA(hdc, usableRight - rs.cx, y,
-                     right.c_str(), static_cast<int>(right.size()));
+            std::string s = ResolveHeaderFooterSlot(
+                band.slots[static_cast<size_t>(slotIdx)],
+                pageNum, totalPages, docName);
+            if (s.empty()) continue;
+            SIZE sz{};
+            GetTextExtentPoint32A(hdc, s.c_str(),
+                                  static_cast<int>(s.size()), &sz);
+            int x;
+            if (slotIdx == 0)            // Left
+                x = usableLeft;
+            else if (slotIdx == 1)       // Center
+                x = usableLeft + (usableW - sz.cx) / 2;
+            else                          // Right
+                x = usableRight - sz.cx;
+            TextOutA(hdc, x, y, s.c_str(), static_cast<int>(s.size()));
         }
     };
     auto emitHeader = [&](int pageNum) {
-        if (!req.headerShowFilename && !req.headerShowPageNumber) return;
-        // Centre the header in the printable part of the top margin (above text).
+        if (!req.header.AnyActive()) return;
         int headerY = std::max(0, (usableTop - defaultLineHeight) / 2);
-        emitBand(pageNum, headerY, req.headerShowFilename, req.headerShowPageNumber);
+        emitBand(pageNum, headerY, req.header);
     };
     auto emitFooter = [&](int pageNum) {
-        if (!req.footerShowFilename && !req.footerShowPageNumber) return;
-        // Centre the footer in the bottom-margin band (below the text area),
-        // clamped to stay inside the device's printable height.
+        if (!req.footer.AnyActive()) return;
         int footerY = usableBottom + std::max(0, (marginBottomPx - defaultLineHeight) / 2);
         if (footerY > vertRes - defaultLineHeight)
             footerY = std::max(usableBottom, vertRes - defaultLineHeight);
-        emitBand(pageNum, footerY, req.footerShowFilename, req.footerShowPageNumber);
+        emitBand(pageNum, footerY, req.footer);
     };
 
     // Draw the floats anchored to `page`, in the requested z-band (below/above

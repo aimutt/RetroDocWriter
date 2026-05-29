@@ -10,6 +10,7 @@
 #include "ui/MenuDefs.h"
 #include "ui/RetroUi.h"
 #include "editor/Dictionary.h"
+#include "editor/HeaderFooter.h"
 #include "editor/RichFileDocument.h"
 #include "editor/FileSettings.h"
 #include "editor/Selection.h"
@@ -48,6 +49,7 @@ enum class PromptMode
     ColumnsDialog,  // whole-document column count + gutter (\cols / \colsx)
     InsertImage,    // path-input prompt → embed a floating image (Insert > Image…)
     CaptionDialog,  // text input → set the selected image float's caption (Insert > Caption…)
+    HeaderFooterDialog, // Page > Header / Footer… — six-slot editor for the band model
     ConfirmSaveAsRtf, // Ctrl+S on a .txt that has formatting: Y = SaveAs.rtf, N = flatten + save .txt
 };
 
@@ -148,6 +150,11 @@ private:
     void ExecuteMenuItem(int menuIdx, int itemIdx);
     int  FirstSelectableItem(int menuIdx) const;
     int  NextSelectableItem(int menuIdx, int fromItem, int dir) const;
+    bool IsSelectableMenuItem(int menuIdx, int itemIdx) const;
+    // True iff an image-kind float is currently selected so Insert > Caption
+    // is meaningful. Used by the menu enable resolver and mirrored into
+    // EditorUiState every frame.
+    bool InsertCaptionEnabled() const;
 
     // Cursor / viewport
     void UpdateCursorBlink();
@@ -208,9 +215,6 @@ private:
     void ToggleSpellCheck();
     void ToggleHighlightMisspelled();
     void ToggleShowMargins();
-    // Flip one header/footer slot (filename/page-number × header/footer),
-    // update status, redraw, and persist to the per-document sidecar.
-    void ToggleHeaderFooterField(bool& flag, const char* label);
     void CheckJustCompletedWord();
     void SaveUserDictionary();
 
@@ -246,10 +250,29 @@ private:
     void MarginBackspace();
 
     // Insert floating objects (Insert menu).
-    void StartInsertImagePrompt();                 // opens the path-input prompt
-    void InsertImageFromFile(const std::string& path);
+    void StartInsertImagePrompt();                 // opens the multi-field dialog
+    void InsertImageFromFile(const std::string& path,
+                             const std::string& caption,
+                             int paddingTwips);
     void InsertShape();                            // inserts a default box float
     void OpenCaptionPrompt();                      // edit selected image float's caption
+    // Insert Image dialog — Path / Caption / Padding tab-cycled like Margins.
+    void CloseInsertImageDialog(bool commit);
+    void InsertImageCycleField(int dir);
+    void InsertImageAdjustField(int dir);
+    void InsertImageTextEdit(char ch);
+    void InsertImageBackspace();
+
+    // Header / Footer dialog — six rows (Header L/C/R, Footer L/C/R). Tab
+    // moves between rows; Space cycles the row's kind; Up/Down cycles the
+    // PageNumber format; typed text edits the CustomText buffer.
+    void OpenHeaderFooterDialog();
+    void CloseHeaderFooterDialog(bool commit);
+    void HeaderFooterCycleField(int dir);
+    void HeaderFooterCycleKind(int dir);
+    void HeaderFooterCycleFmt(int dir);
+    void HeaderFooterTextEdit(char ch);
+    void HeaderFooterBackspace();
 
     // Columns dialog (Page > Columns…) — count + gutter, tab-cycled like Margins.
     void OpenColumnsDialog();
@@ -389,13 +412,19 @@ private:
 
     // WYSIWYG + print page chrome: four independent slots placing the file
     // name (left) and page number (right) in the top-margin header and/or the
-    // bottom-margin footer. Per-document (sidecar keys header_filename /
-    // header_page_number / footer_filename / footer_page_number); all default
-    // off so nothing shows or prints unless asked.
-    bool         m_headerShowFilename   = false;
-    bool         m_headerShowPageNumber = false;
-    bool         m_footerShowFilename   = false;
-    bool         m_footerShowPageNumber = false;
+    // Per-document header / footer bands. Each band has three independent
+    // sub-slots laid out Left / Center / Right; each sub-slot picks from
+    // {None, CustomText, Filename, PageNumber (one of four formats), Date}.
+    // Persisted in the sidecar via the new hf_* keys with one-release legacy
+    // migration from the previous header_filename / header_page_number /
+    // footer_filename / footer_page_number bools.
+    HeaderFooterBand m_header;
+    HeaderFooterBand m_footer;
+    // Focused row in the Header/Footer dialog (0..5 = Header L/C/R, Footer L/C/R).
+    int              m_hfFocusIdx        = 0;
+    // Pre-edit snapshot so Esc restores both bands.
+    HeaderFooterBand m_hfHeaderSnapshot;
+    HeaderFooterBand m_hfFooterSnapshot;
 
     // Print dialog state — populated when OpenPrintDialog runs, persists
     // across invocations within the session so the user's last choices stick.
@@ -419,6 +448,13 @@ private:
     // Columns dialog edit-in-progress strings (count, gutter-in-inches)
     std::string      m_columnsEditText[2];
     int              m_columnsFocusIdx = 0;
+    // Insert Image dialog edit-in-progress strings + focused field.
+    // Order matches InsertImageField below (Path/Caption/Padding).
+    enum class InsertImageField { Path = 0, Caption = 1, Padding = 2 };
+    std::string        m_insertImagePathText;
+    std::string        m_insertImageCaptionText;
+    std::string        m_insertImagePaddingText;
+    InsertImageField   m_insertImageFocus = InsertImageField::Path;
 
     Layout                          m_layout;
     ThemeName                       m_themeName = ThemeName::Green;

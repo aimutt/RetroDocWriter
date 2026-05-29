@@ -800,7 +800,6 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
         const bool isTextInput =
             m_promptMode == PromptMode::Open
          || m_promptMode == PromptMode::SaveAs
-         || m_promptMode == PromptMode::InsertImage
          || m_promptMode == PromptMode::CaptionDialog
          || m_promptMode == PromptMode::Find
          || m_promptMode == PromptMode::AddWordDialog
@@ -821,6 +820,35 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
                     m_promptText += s;
                     if (m_promptMode == PromptMode::Find) m_findQuery = m_promptText;
                 }
+            }
+            return;
+        }
+        // Insert Image dialog has three independent text/numeric fields. Paste
+        // lands in the focused field; for the numeric Padding field, only the
+        // first valid digit/dot prefix is accepted.
+        if (m_promptMode == PromptMode::InsertImage && SDL_HasClipboardText())
+        {
+            char* raw = SDL_GetClipboardText();
+            if (raw)
+            {
+                std::string s(raw);
+                SDL_free(raw);
+                for (char& c : s) if (c == '\r' || c == '\n') c = ' ';
+                for (char c : s) InsertImageTextEdit(c);
+            }
+            return;
+        }
+        // Header / Footer dialog: paste lands in the focused row's CustomText
+        // (a no-op when the row's kind isn't CustomText).
+        if (m_promptMode == PromptMode::HeaderFooterDialog && SDL_HasClipboardText())
+        {
+            char* raw = SDL_GetClipboardText();
+            if (raw)
+            {
+                std::string s(raw);
+                SDL_free(raw);
+                for (char& c : s) if (c == '\r' || c == '\n') c = ' ';
+                for (char c : s) HeaderFooterTextEdit(c);
             }
             return;
         }
@@ -929,6 +957,58 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
             case SDL_SCANCODE_BACKSPACE: ColumnsBackspace();                 return;
             case SDL_SCANCODE_RETURN:    CloseColumnsDialog(true);           return;
             case SDL_SCANCODE_ESCAPE:    CloseColumnsDialog(false);          return;
+            default:                     return;
+        }
+    }
+
+    // Insert Image dialog — three fields (path/caption text + padding inches).
+    // Path & Caption accept arbitrary printable text (via HandleTextInput);
+    // Padding accepts digits and a single decimal point only.
+    if (m_promptMode == PromptMode::InsertImage)
+    {
+        const bool shift = (key.mod & SDL_KMOD_SHIFT) != 0;
+        switch (key.scancode)
+        {
+            case SDL_SCANCODE_TAB:       InsertImageCycleField(shift ? -1 : +1); return;
+            case SDL_SCANCODE_UP:        InsertImageAdjustField(+1);             return;
+            case SDL_SCANCODE_DOWN:      InsertImageAdjustField(-1);             return;
+            case SDL_SCANCODE_BACKSPACE: InsertImageBackspace();                 return;
+            case SDL_SCANCODE_RETURN:    CloseInsertImageDialog(true);           return;
+            case SDL_SCANCODE_ESCAPE:    CloseInsertImageDialog(false);          return;
+            default:                     return;
+        }
+    }
+
+    // Header / Footer dialog — 6 rows. Tab moves between rows; Space cycles
+    // the focused row's kind; Up/Down cycles the page-number format; type to
+    // edit the CustomText buffer; Backspace deletes from it; Enter commits;
+    // Esc cancels and restores the pre-edit snapshot.
+    if (m_promptMode == PromptMode::HeaderFooterDialog)
+    {
+        const bool shift = (key.mod & SDL_KMOD_SHIFT) != 0;
+        switch (key.scancode)
+        {
+            case SDL_SCANCODE_TAB:       HeaderFooterCycleField(shift ? -1 : +1); return;
+            case SDL_SCANCODE_SPACE:
+            {
+                // Space cycles the row's Kind, EXCEPT while a CustomText slot
+                // is focused — there the user is typing text, so a literal
+                // space must land in the buffer (let the TEXT_INPUT event
+                // through). Same idiom as the Print dialog's RangeMode space.
+                const int idx = m_hfFocusIdx;
+                const auto& slot = (idx < 3) ? m_header.slots[static_cast<size_t>(idx)]
+                                             : m_footer.slots[static_cast<size_t>(idx - 3)];
+                if (slot.kind == HeaderFooterSlotKind::CustomText)
+                    return;   // fall through to HandleTextInput
+                HeaderFooterCycleKind(+1);
+                m_swallowNextTextInput = true;   // drop the literal space
+                return;
+            }
+            case SDL_SCANCODE_UP:        HeaderFooterCycleFmt(+1);                return;
+            case SDL_SCANCODE_DOWN:      HeaderFooterCycleFmt(-1);                return;
+            case SDL_SCANCODE_BACKSPACE: HeaderFooterBackspace();                 return;
+            case SDL_SCANCODE_RETURN:    CloseHeaderFooterDialog(true);           return;
+            case SDL_SCANCODE_ESCAPE:    CloseHeaderFooterDialog(false);          return;
             default:                     return;
         }
     }
@@ -1393,6 +1473,59 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
         return true;
     }
 
+    // Insert Image dialog — clicks land on a field (focus) or on the hint
+    // tokens (OK / Cancel). Click outside cancels, matching Margins/Columns.
+    if (m_promptMode == PromptMode::InsertImage)
+    {
+        auto rect = m_ui->InsertImageDialogRect(m_screenColumns);
+        if (!rect.Contains(cellCol, cellRow))
+        {
+            CloseInsertImageDialog(false);
+            m_needsRedraw = true;
+            return true;
+        }
+        auto hit = m_ui->HitTestInsertImageDialog(cellCol, cellRow, m_screenColumns);
+        switch (hit)
+        {
+            case RetroUi::InsertImageHit::Path:
+                m_insertImageFocus = InsertImageField::Path;    m_needsRedraw = true; break;
+            case RetroUi::InsertImageHit::Caption:
+                m_insertImageFocus = InsertImageField::Caption; m_needsRedraw = true; break;
+            case RetroUi::InsertImageHit::Padding:
+                m_insertImageFocus = InsertImageField::Padding; m_needsRedraw = true; break;
+            case RetroUi::InsertImageHit::OkHint:     CloseInsertImageDialog(true);  m_needsRedraw = true; break;
+            case RetroUi::InsertImageHit::CancelHint: CloseInsertImageDialog(false); m_needsRedraw = true; break;
+            default: break;
+        }
+        return true;
+    }
+
+    // Header / Footer dialog — clicks select a row or hit the OK/Cancel hint.
+    if (m_promptMode == PromptMode::HeaderFooterDialog)
+    {
+        auto rect = m_ui->HeaderFooterDialogRect(m_screenColumns);
+        if (!rect.Contains(cellCol, cellRow))
+        {
+            CloseHeaderFooterDialog(false);
+            m_needsRedraw = true;
+            return true;
+        }
+        auto click = m_ui->HitTestHeaderFooterDialog(cellCol, cellRow, m_screenColumns);
+        switch (click.hit)
+        {
+            case RetroUi::HeaderFooterHit::Row:
+                if (click.row >= 0 && click.row < 6) m_hfFocusIdx = click.row;
+                m_needsRedraw = true;
+                break;
+            case RetroUi::HeaderFooterHit::OkHint:
+                CloseHeaderFooterDialog(true);  m_needsRedraw = true; break;
+            case RetroUi::HeaderFooterHit::CancelHint:
+                CloseHeaderFooterDialog(false); m_needsRedraw = true; break;
+            default: break;
+        }
+        return true;
+    }
+
     // Print dialog
     if (m_promptMode == PromptMode::PrintDialog)
     {
@@ -1522,8 +1655,7 @@ void Application::HandleMouseDown(int cellCol, int cellRow, int px, int py, Uint
             m_wordWrap, m_showWordCount,
             m_spellCheckEnabled, m_highlightMisspelled,
             m_showMargins,
-            m_headerShowFilename, m_headerShowPageNumber,
-            m_footerShowFilename, m_footerShowPageNumber);
+            InsertCaptionEnabled());
         if (item >= 0)
         {
             // ExecuteMenuItem already filters separators (empty label).
@@ -1837,8 +1969,7 @@ void Application::HandleMouseMotion(int cellCol, int cellRow, int px, int py)
             m_wordWrap, m_showWordCount,
             m_spellCheckEnabled, m_highlightMisspelled,
             m_showMargins,
-            m_headerShowFilename, m_headerShowPageNumber,
-            m_footerShowFilename, m_footerShowPageNumber);
+            InsertCaptionEnabled());
         if (item >= 0 && item != m_activeItem)
         {
             // Skip separators — keep the previous highlighted item.
@@ -1868,7 +1999,6 @@ void Application::HandleTextInput(const char* text)
     {
         if (m_promptMode == PromptMode::Open            ||
             m_promptMode == PromptMode::SaveAs          ||
-            m_promptMode == PromptMode::InsertImage     ||
             m_promptMode == PromptMode::CaptionDialog   ||
             m_promptMode == PromptMode::AddWordDialog   ||
             m_promptMode == PromptMode::RemoveWordDialog||
@@ -1894,6 +2024,16 @@ void Application::HandleTextInput(const char* text)
         {
             for (const char* p = text; *p; ++p)
                 ColumnsTextEdit(*p);
+        }
+        else if (m_promptMode == PromptMode::InsertImage)
+        {
+            for (const char* p = text; *p; ++p)
+                InsertImageTextEdit(*p);
+        }
+        else if (m_promptMode == PromptMode::HeaderFooterDialog)
+        {
+            for (const char* p = text; *p; ++p)
+                HeaderFooterTextEdit(*p);
         }
         return;
     }
@@ -2393,8 +2533,8 @@ void Application::NewFile()
     m_undoHistory.ClearAll();
     m_lastActionWasInsert = false;
     // Per-doc header/footer slots all start off on a fresh document.
-    m_headerShowFilename = m_headerShowPageNumber = false;
-    m_footerShowFilename = m_footerShowPageNumber = false;
+    m_header = HeaderFooterBand{};
+    m_footer = HeaderFooterBand{};
     m_statusMessage = "New file";
     UpdateWindowTitle();
 }
@@ -2498,11 +2638,6 @@ void Application::CommitPrompt()
                 : "'" + m_promptText + "' is NOT in the dictionary";
         }
     }
-    else if (mode == PromptMode::InsertImage)
-    {
-        if (!m_promptText.empty())
-            InsertImageFromFile(m_promptText);   // path used verbatim (not RTF-defaulted)
-    }
     else if (mode == PromptMode::CaptionDialog)
     {
         // Empty text is valid — it removes the caption. The selection is held
@@ -2597,11 +2732,27 @@ void Application::CloseMenu()
     m_activeItem = -1;
 }
 
+bool Application::IsSelectableMenuItem(int menuIdx, int itemIdx) const
+{
+    const auto& items = GetMenuDefs()[menuIdx].items;
+    if (items[itemIdx].label.empty()) return false;          // separator
+    return IsMenuItemEnabled(menuIdx, itemIdx, InsertCaptionEnabled());
+}
+
+bool Application::InsertCaptionEnabled() const
+{
+    if (!m_document) return false;
+    const auto& floats = m_document->Buffer().Floats();
+    if (m_selectedFloat < 0 || m_selectedFloat >= static_cast<int>(floats.size()))
+        return false;
+    return floats[static_cast<size_t>(m_selectedFloat)].kind == FloatObject::Kind::Image;
+}
+
 int Application::FirstSelectableItem(int menuIdx) const
 {
     const auto& items = GetMenuDefs()[menuIdx].items;
     for (int i = 0; i < static_cast<int>(items.size()); ++i)
-        if (!items[i].label.empty())
+        if (IsSelectableMenuItem(menuIdx, i))
             return i;
     return -1;
 }
@@ -2613,7 +2764,7 @@ int Application::NextSelectableItem(int menuIdx, int fromItem, int dir) const
     int i = fromItem + dir;
     while (i >= 0 && i < n)
     {
-        if (!items[i].label.empty()) return i;
+        if (IsSelectableMenuItem(menuIdx, i)) return i;
         i += dir;
     }
     return fromItem; // stay put if no other selectable item exists
@@ -2626,6 +2777,9 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
     const auto& items = menus[menuIdx].items;
     if (itemIdx < 0 || itemIdx >= static_cast<int>(items.size())) { CloseMenu(); return; }
     if (items[itemIdx].label.empty()) return; // separator — no-op, leave menu open
+    // Disabled items absorb activation silently (defense in depth — keyboard
+    // and mouse paths already skip them upstream).
+    if (!IsMenuItemEnabled(menuIdx, itemIdx, InsertCaptionEnabled())) return;
 
     // In-place On/Off toggles keep the dropdown open so the user can flip
     // several items in one visit; every other item closes the menu first
@@ -2712,12 +2866,9 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
         case 4: // Page
             switch (itemIdx)
             {
-                case 0: OpenMarginsDialog(); break; // Margins...
-                case 1: ToggleHeaderFooterField(m_headerShowFilename,   "Header file name");   break;
-                case 2: ToggleHeaderFooterField(m_headerShowPageNumber, "Header page number"); break;
-                case 3: ToggleHeaderFooterField(m_footerShowFilename,   "Footer file name");   break;
-                case 4: ToggleHeaderFooterField(m_footerShowPageNumber, "Footer page number"); break;
-                case 5: OpenColumnsDialog(); break; // Columns...
+                case 0: OpenMarginsDialog();       break;  // Margins...
+                case 1: OpenHeaderFooterDialog();  break;  // Header / Footer...
+                case 2: OpenColumnsDialog();       break;  // Columns...
                 default: break;
             }
             break;
@@ -3237,13 +3388,94 @@ void Application::ToggleShowMargins()
     SaveGlobalSettings();
 }
 
-void Application::ToggleHeaderFooterField(bool& flag, const char* label)
+// ---------------------------------------------------------------------------
+// Header / Footer dialog (Page > Header / Footer…)
+// ---------------------------------------------------------------------------
+
+namespace
 {
-    flag = !flag;
-    m_statusMessage = std::string(label) + (flag ? " shown" : " hidden");
-    m_needsRedraw   = true;
-    // Per-document setting — persist to the sidecar, not config.ini.
-    WriteSidecarForCurrentDocument();
+    // 0..5 -> (band, slot) accessor: 0=H.Left, 1=H.Center, 2=H.Right,
+    //                                3=F.Left, 4=F.Center, 5=F.Right.
+    HeaderFooterSlot& HfSlotAt(HeaderFooterBand& header, HeaderFooterBand& footer, int idx)
+    {
+        if (idx < 3) return header.slots[static_cast<size_t>(idx)];
+        return footer.slots[static_cast<size_t>(idx - 3)];
+    }
+}
+
+void Application::OpenHeaderFooterDialog()
+{
+    m_promptMode        = PromptMode::HeaderFooterDialog;
+    m_hfFocusIdx        = 0;
+    m_hfHeaderSnapshot  = m_header;       // for Esc restore
+    m_hfFooterSnapshot  = m_footer;
+    m_statusMessage.clear();
+    m_needsRedraw = true;
+}
+
+void Application::CloseHeaderFooterDialog(bool commit)
+{
+    if (!commit)
+    {
+        m_header = m_hfHeaderSnapshot;
+        m_footer = m_hfFooterSnapshot;
+    }
+    else
+    {
+        // Persist immediately — same write idiom the old toggle used.
+        WriteSidecarForCurrentDocument();
+        m_statusMessage = "Header / footer updated";
+    }
+    m_promptMode  = PromptMode::None;
+    m_needsRedraw = true;
+}
+
+void Application::HeaderFooterCycleField(int dir)
+{
+    m_hfFocusIdx = ((m_hfFocusIdx + dir) % 6 + 6) % 6;
+    m_needsRedraw = true;
+}
+
+void Application::HeaderFooterCycleKind(int dir)
+{
+    auto& slot = HfSlotAt(m_header, m_footer, m_hfFocusIdx);
+    int k = (static_cast<int>(slot.kind) + dir) % 5;
+    if (k < 0) k += 5;
+    slot.kind = static_cast<HeaderFooterSlotKind>(k);
+    m_needsRedraw = true;
+}
+
+void Application::HeaderFooterCycleFmt(int dir)
+{
+    auto& slot = HfSlotAt(m_header, m_footer, m_hfFocusIdx);
+    if (slot.kind != HeaderFooterSlotKind::PageNumber) return;
+    int f = (static_cast<int>(slot.fmt) + dir) % 4;
+    if (f < 0) f += 4;
+    slot.fmt = static_cast<PageNumberFormat>(f);
+    m_needsRedraw = true;
+}
+
+void Application::HeaderFooterTextEdit(char ch)
+{
+    auto& slot = HfSlotAt(m_header, m_footer, m_hfFocusIdx);
+    if (slot.kind != HeaderFooterSlotKind::CustomText) return;
+    // Hard cap per sub-slot so a band's three sub-slots can't visually
+    // collide on a typical US-Letter page width (~6.5" usable at 12pt fits
+    // roughly 80 chars across the full band; 60 leaves headroom for the
+    // neighboring slots and matches what's comfortably scrollable in the
+    // 43-cell dialog field).
+    constexpr size_t kHfTextMax = 60;
+    if (slot.text.size() >= kHfTextMax) return;
+    slot.text += ch;
+    m_needsRedraw = true;
+}
+
+void Application::HeaderFooterBackspace()
+{
+    auto& slot = HfSlotAt(m_header, m_footer, m_hfFocusIdx);
+    if (slot.kind != HeaderFooterSlotKind::CustomText) return;
+    if (!slot.text.empty()) slot.text.pop_back();
+    m_needsRedraw = true;
 }
 
 void Application::CheckJustCompletedWord()
@@ -3477,10 +3709,8 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.formats         = &m_document->Buffer().Formats();
     m_printRequest.pageBreakBefore = &m_document->Buffer().PageBreaks();
     m_printRequest.alignment       = &m_document->Buffer().Alignments();
-    m_printRequest.headerShowFilename   = m_headerShowFilename;
-    m_printRequest.headerShowPageNumber = m_headerShowPageNumber;
-    m_printRequest.footerShowFilename   = m_footerShowFilename;
-    m_printRequest.footerShowPageNumber = m_footerShowPageNumber;
+    m_printRequest.header               = m_header;
+    m_printRequest.footer               = m_footer;
     m_printRequest.floats               = &m_document->Buffer().Floats();
     // Share the screen's exact layout (breaks, pagination, float runs) so the
     // printed line breaks match WYSIWYG instead of diverging from GDI metrics.
@@ -3746,8 +3976,92 @@ void Application::MarginBackspace()
 void Application::StartInsertImagePrompt()
 {
     m_promptMode = PromptMode::InsertImage;
-    m_promptText.clear();
+    m_insertImagePathText.clear();
+    m_insertImageCaptionText.clear();
+    // Start blank so typing replaces; an empty padding parses to 0.0 on commit.
+    // Up/Down on the Padding field still steps from 0.0 in 0.05" increments.
+    m_insertImagePaddingText.clear();
+    m_insertImageFocus       = InsertImageField::Path;
+    m_promptText.clear();    // unused by this dialog; cleared for safety
     m_statusMessage.clear();
+}
+
+void Application::CloseInsertImageDialog(bool commit)
+{
+    if (commit)
+    {
+        std::string path    = m_insertImagePathText;
+        std::string caption = m_insertImageCaptionText;
+        double padIn = 0.0;
+        try { if (!m_insertImagePaddingText.empty()) padIn = std::stod(m_insertImagePaddingText); }
+        catch (...) { padIn = 0.0; }
+        padIn = std::clamp(padIn, 0.0, 1.0);
+        int paddingTwips = static_cast<int>(padIn * 1440.0 + 0.5);
+        m_promptMode = PromptMode::None;
+        InsertImageFromFile(path, caption, paddingTwips);
+    }
+    else
+    {
+        m_promptMode = PromptMode::None;
+        m_statusMessage.clear();
+    }
+    m_needsRedraw = true;
+}
+
+void Application::InsertImageCycleField(int dir)
+{
+    int i = static_cast<int>(m_insertImageFocus);
+    i = ((i + dir) % 3 + 3) % 3;
+    m_insertImageFocus = static_cast<InsertImageField>(i);
+    m_needsRedraw = true;
+}
+
+void Application::InsertImageAdjustField(int dir)
+{
+    if (m_insertImageFocus != InsertImageField::Padding) return;
+    double v = 0.0;
+    try { if (!m_insertImagePaddingText.empty()) v = std::stod(m_insertImagePaddingText); }
+    catch (...) { v = 0.0; }
+    v = std::clamp(v + 0.05 * dir, 0.0, 1.0);
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%.2f", v);
+    m_insertImagePaddingText = buf;
+    m_needsRedraw = true;
+}
+
+void Application::InsertImageTextEdit(char ch)
+{
+    switch (m_insertImageFocus)
+    {
+        case InsertImageField::Path:    m_insertImagePathText    += ch; break;
+        case InsertImageField::Caption: m_insertImageCaptionText += ch; break;
+        case InsertImageField::Padding:
+        {
+            // Digits or a single decimal point only.
+            if (ch == '.')
+            {
+                if (m_insertImagePaddingText.find('.') == std::string::npos)
+                    m_insertImagePaddingText += ch;
+            }
+            else if (ch >= '0' && ch <= '9')
+            {
+                m_insertImagePaddingText += ch;
+            }
+            break;
+        }
+    }
+}
+
+void Application::InsertImageBackspace()
+{
+    std::string* s = nullptr;
+    switch (m_insertImageFocus)
+    {
+        case InsertImageField::Path:    s = &m_insertImagePathText;    break;
+        case InsertImageField::Caption: s = &m_insertImageCaptionText; break;
+        case InsertImageField::Padding: s = &m_insertImagePaddingText; break;
+    }
+    if (s && !s->empty()) s->pop_back();
 }
 
 void Application::OpenCaptionPrompt()
@@ -3759,7 +4073,7 @@ void Application::OpenCaptionPrompt()
     if (m_selectedFloat < 0 || m_selectedFloat >= static_cast<int>(floats.size())
         || floats[static_cast<size_t>(m_selectedFloat)].kind != FloatObject::Kind::Image)
     {
-        m_statusMessage = "Select an image first (click it), then Insert > Caption…";
+        m_statusMessage = "Select an image first (click it), then Insert > Caption...";
         return;
     }
     m_promptMode = PromptMode::CaptionDialog;
@@ -3767,7 +4081,9 @@ void Application::OpenCaptionPrompt()
     m_statusMessage.clear();
 }
 
-void Application::InsertImageFromFile(const std::string& path)
+void Application::InsertImageFromFile(const std::string& path,
+                                       const std::string& caption,
+                                       int paddingTwips)
 {
     if (path.empty()) return;
     std::ifstream file(path, std::ios::binary);
@@ -3808,6 +4124,8 @@ void Application::InsertImageFromFile(const std::string& path)
     f.imageBytes = std::move(bytes);
     f.imageId    = NextFloatImageId();
     f.isPng      = isPng || !isJpeg;        // default to pngblip for non-JPEG
+    f.caption           = caption;
+    f.textDistanceTwips = std::max(0, paddingTwips);
 
     PushUndoBeforeEdit();
     m_document->Buffer().FloatsMutable().push_back(std::move(f));
@@ -3943,10 +4261,21 @@ void Application::CaptureFileSettings(FileSettings& s) const
 {
     s.SetBool("word_wrap",         m_wordWrap);
     s.SetBool("show_word_count",   m_showWordCount);
-    s.SetBool("header_filename",    m_headerShowFilename);
-    s.SetBool("header_page_number", m_headerShowPageNumber);
-    s.SetBool("footer_filename",    m_footerShowFilename);
-    s.SetBool("footer_page_number", m_footerShowPageNumber);
+    // Header / Footer band model — 6 sub-slots × 3 keys each (kind/text/fmt).
+    // Position prefix: hL/hC/hR for the header band, fL/fC/fR for the footer.
+    auto writeSlot = [&](const char* prefix, const HeaderFooterSlot& slot) {
+        s.SetString(std::string("hf_") + prefix + "_kind",
+                    std::to_string(static_cast<int>(slot.kind)));
+        s.SetString(std::string("hf_") + prefix + "_text", slot.text);
+        s.SetString(std::string("hf_") + prefix + "_fmt",
+                    std::to_string(static_cast<int>(slot.fmt)));
+    };
+    writeSlot("hL", m_header.slots[0]);
+    writeSlot("hC", m_header.slots[1]);
+    writeSlot("hR", m_header.slots[2]);
+    writeSlot("fL", m_footer.slots[0]);
+    writeSlot("fC", m_footer.slots[1]);
+    writeSlot("fR", m_footer.slots[2]);
     s.SetString("margin_top",    std::to_string(m_margins.topIn));
     s.SetString("margin_bottom", std::to_string(m_margins.bottomIn));
     s.SetString("margin_left",   std::to_string(m_margins.leftIn));
@@ -3959,16 +4288,40 @@ void Application::ApplyFileSettings(const FileSettings& s)
         SetWordWrap(s.GetBool("word_wrap"));
     if (s.Has("show_word_count"))
         m_showWordCount = s.GetBool("show_word_count");
-    // Per-document header/footer slots. Read each with an explicit else-false
-    // reset so a value never leaks from a previously-open document. Legacy
-    // migration: the old single `show_header_footer` key (= filename + page
-    // number in the footer) maps to both footer slots when the new keys are
-    // absent.
-    bool legacyFooter = s.Has("show_header_footer") && s.GetBool("show_header_footer");
-    m_headerShowFilename   = s.Has("header_filename")    ? s.GetBool("header_filename")    : false;
-    m_headerShowPageNumber = s.Has("header_page_number") ? s.GetBool("header_page_number") : false;
-    m_footerShowFilename   = s.Has("footer_filename")    ? s.GetBool("footer_filename")    : legacyFooter;
-    m_footerShowPageNumber = s.Has("footer_page_number") ? s.GetBool("footer_page_number") : legacyFooter;
+    // Per-document header/footer slots. Always reset to defaults first so a
+    // value never leaks from a previously-open document, then layer in (1)
+    // legacy keys if present, (2) the new hf_* keys if present.
+    m_header = HeaderFooterBand{};
+    m_footer = HeaderFooterBand{};
+    bool legacyFooterOn = s.Has("show_header_footer") && s.GetBool("show_header_footer");
+    bool legacyHeaderFn = s.Has("header_filename")    && s.GetBool("header_filename");
+    bool legacyHeaderPg = s.Has("header_page_number") && s.GetBool("header_page_number");
+    bool legacyFooterFn = (s.Has("footer_filename")
+                              ? s.GetBool("footer_filename")
+                              : legacyFooterOn);
+    bool legacyFooterPg = (s.Has("footer_page_number")
+                              ? s.GetBool("footer_page_number")
+                              : legacyFooterOn);
+    if (legacyHeaderFn) { m_header.slots[0].kind = HeaderFooterSlotKind::Filename; }
+    if (legacyHeaderPg) { m_header.slots[2].kind = HeaderFooterSlotKind::PageNumber;
+                          m_header.slots[2].fmt  = PageNumberFormat::PageNofM; }
+    if (legacyFooterFn) { m_footer.slots[0].kind = HeaderFooterSlotKind::Filename; }
+    if (legacyFooterPg) { m_footer.slots[2].kind = HeaderFooterSlotKind::PageNumber;
+                          m_footer.slots[2].fmt  = PageNumberFormat::PageNofM; }
+    auto readSlot = [&](const char* prefix, HeaderFooterSlot& slot) {
+        std::string kk = std::string("hf_") + prefix + "_kind";
+        std::string kt = std::string("hf_") + prefix + "_text";
+        std::string kf = std::string("hf_") + prefix + "_fmt";
+        if (s.Has(kk)) try { slot.kind = static_cast<HeaderFooterSlotKind>(std::stoi(s.GetString(kk))); } catch (...) {}
+        if (s.Has(kt)) slot.text = s.GetString(kt);
+        if (s.Has(kf)) try { slot.fmt  = static_cast<PageNumberFormat>(std::stoi(s.GetString(kf))); }     catch (...) {}
+    };
+    readSlot("hL", m_header.slots[0]);
+    readSlot("hC", m_header.slots[1]);
+    readSlot("hR", m_header.slots[2]);
+    readSlot("fL", m_footer.slots[0]);
+    readSlot("fC", m_footer.slots[1]);
+    readSlot("fR", m_footer.slots[2]);
     // Legacy `wysiwyg` sidecar key from before the product split is silently
     // ignored on read; RetroDocWriter is always WYSIWYG now.
     auto readDouble = [&](const char* key, double& out) {
@@ -4077,7 +4430,6 @@ void Application::Render()
     // bottom-of-screen prompt). Active only for text/confirm modes.
     uiState.dialogActive = (m_promptMode == PromptMode::Open             ||
                             m_promptMode == PromptMode::SaveAs           ||
-                            m_promptMode == PromptMode::InsertImage      ||
                             m_promptMode == PromptMode::CaptionDialog    ||
                             m_promptMode == PromptMode::Find             ||
                             m_promptMode == PromptMode::ConfirmExit      ||
@@ -4110,9 +4462,8 @@ void Application::Render()
             uiState.dialogPrompt2 = "";
             break;
         case PromptMode::InsertImage:
-            uiState.dialogTitle   = "Insert Image";
-            uiState.dialogPrompt  = "Image file path:";
-            uiState.dialogPrompt2 = "";
+            // Multi-field dialog — populated below via insertImage* fields,
+            // not via the generic dialogTitle/dialogPrompt.
             break;
         case PromptMode::CaptionDialog:
             uiState.dialogTitle   = "Image Caption";
@@ -4186,6 +4537,7 @@ void Application::Render()
     uiState.menuOpen      = (m_promptMode == PromptMode::MenuOpen);
     uiState.activeMenu    = m_activeMenu;
     uiState.activeItem    = m_activeItem;
+    uiState.insertCaptionEnabled = InsertCaptionEnabled();
 
     // Overlay dialogs
     uiState.showHelp  = (m_promptMode == PromptMode::HelpScreen);
@@ -4249,11 +4601,11 @@ void Application::Render()
     uiState.highlightMisspelled = m_highlightMisspelled;
 
     // WYSIWYG margins toggle (Options > Show Margins).
-    uiState.showMargins         = m_showMargins;
-    uiState.headerShowFilename   = m_headerShowFilename;
-    uiState.headerShowPageNumber = m_headerShowPageNumber;
-    uiState.footerShowFilename   = m_footerShowFilename;
-    uiState.footerShowPageNumber = m_footerShowPageNumber;
+    uiState.showMargins              = m_showMargins;
+    uiState.headerFooterDialogActive = (m_promptMode == PromptMode::HeaderFooterDialog);
+    uiState.hfFocusIdx               = m_hfFocusIdx;
+    uiState.headerBand               = m_header;
+    uiState.footerBand               = m_footer;
 
     // Print dialog snapshot
     uiState.printDialogActive   = (m_promptMode == PromptMode::PrintDialog);
@@ -4275,6 +4627,11 @@ void Application::Render()
     uiState.columnsEditText[0]  = m_columnsEditText[0];
     uiState.columnsEditText[1]  = m_columnsEditText[1];
     uiState.columnsFocusIdx     = m_columnsFocusIdx;
+    uiState.insertImageDialogActive = (m_promptMode == PromptMode::InsertImage);
+    uiState.insertImagePathText     = m_insertImagePathText;
+    uiState.insertImageCaptionText  = m_insertImageCaptionText;
+    uiState.insertImagePaddingText  = m_insertImagePaddingText;
+    uiState.insertImageFocusIdx     = static_cast<int>(m_insertImageFocus);
     if (m_highlightMisspelled)
     {
         // Tokenize each visible buffer line and record misspelled spans.
@@ -4398,10 +4755,8 @@ WysiwygRenderer::DrawContext Application::BuildWysiwygDrawContext() const
     ctx.insertFace      = ctx.face;
     ctx.insertPointSize = ctx.pointSize;
     ctx.showMargins           = m_showMargins;
-    ctx.headerShowFilename    = m_headerShowFilename;
-    ctx.headerShowPageNumber  = m_headerShowPageNumber;
-    ctx.footerShowFilename    = m_footerShowFilename;
-    ctx.footerShowPageNumber  = m_footerShowPageNumber;
+    ctx.header                = m_header;
+    ctx.footer                = m_footer;
     ctx.documentName          = m_document ? m_document->DisplayName() : std::string();
     if (m_document)
     {

@@ -1,4 +1,5 @@
 #pragma once
+#include "editor/HeaderFooter.h"
 #include "render/FontFace.h"
 #include "render/ImageCache.h"
 #include "render/PlacedSegment.h"
@@ -88,16 +89,12 @@ public:
         // don't set it explicitly.
         bool showMargins = true;
 
-        // Four independent header/footer slots, matching the print path so the
-        // on-screen view is WYSIWYG. The file name draws left-aligned and the
-        // page number right-aligned within the top-margin header and/or the
-        // bottom-margin footer. All default off. `documentName` is the
-        // basename shown for the file-name slots.
-        bool        headerShowFilename   = false;
-        bool        headerShowPageNumber = false;
-        bool        footerShowFilename   = false;
-        bool        footerShowPageNumber = false;
-        std::string documentName;
+        // Per-document header/footer bands (three sub-slots each: L/C/R),
+        // matching the print path so the on-screen view is WYSIWYG.
+        // `documentName` is the basename shown for any Filename sub-slot.
+        HeaderFooterBand header;
+        HeaderFooterBand footer;
+        std::string      documentName;
 
         // Whole-document multi-column layout (\cols / \colsx). 1 = single
         // column; the content area splits into this many equal columns with

@@ -83,9 +83,18 @@ namespace
             case FloatObject::VRef::Paragraph: out += "\\shpbypara"; break;
         }
         std::snprintf(buf, sizeof(buf),
-                      "\\shpwr%d\\shpwrk%d\\shpz%d\\shpfblwtxt%d\n",
+                      "\\shpwr%d\\shpwrk%d\\shpz%d\\shpfblwtxt%d",
                       f.wrapType, f.wrapSide, f.zOrder, f.belowText ? 1 : 0);
         out += buf;
+        if (f.textDistanceTwips > 0)
+        {
+            std::snprintf(buf, sizeof(buf),
+                          "\\dxTextLeft%d\\dyTextTop%d\\dxTextRight%d\\dyTextBottom%d",
+                          f.textDistanceTwips, f.textDistanceTwips,
+                          f.textDistanceTwips, f.textDistanceTwips);
+            out += buf;
+        }
+        out += "\n";
 
         if (f.kind == FloatObject::Kind::Image && !f.imageBytes.empty())
         {

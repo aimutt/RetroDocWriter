@@ -70,11 +70,7 @@ inline const std::vector<MenuDef>& GetMenuDefs()
         }},
         { "Page", 29, {
             { "Margins...",          ""  },
-            // Four independent slots; each shows On/Off live at draw time.
-            { "Header: File Name",   ""  },
-            { "Header: Page Number", ""  },
-            { "Footer: File Name",   ""  },
-            { "Footer: Page Number", ""  },
+            { "Header / Footer...",  ""  },
             { "Columns...",          ""  },
         }},
         { "Tools", 35, {
@@ -113,10 +109,17 @@ inline const std::vector<MenuDef>& GetMenuDefs()
 // for these same items.
 inline bool IsToggleMenuItem(int menuIdx, int itemIdx)
 {
-    // Page menu (idx 4): Header/Footer slots 1..4.
-    if (menuIdx == 4 && itemIdx >= 1 && itemIdx <= 4) return true;
     // Options menu (idx 6): Word Wrap, Word Count, Spell Check,
     // Highlight Misspelled, Show Margins (items 2..6).
     if (menuIdx == 6 && itemIdx >= 2 && itemIdx <= 6) return true;
     return false;
+}
+
+// Context-dependent enable state. Disabled items render dim, skip keyboard
+// navigation, and ignore Enter/click. Add more parameters as new items grow
+// contextual gates; today only Insert > Caption (menu 7, item 2) needs one.
+inline bool IsMenuItemEnabled(int menuIdx, int itemIdx, bool insertCaptionEnabled)
+{
+    if (menuIdx == 7 && itemIdx == 2) return insertCaptionEnabled;
+    return true;
 }

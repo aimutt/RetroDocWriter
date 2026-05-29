@@ -78,6 +78,16 @@ void RetroUi::Draw(ScreenBuffer& buffer, const Cursor& cursor, const EditorUiSta
         DrawMarginsDialog(buffer, state);
         CheckDialogBoundsRight(buffer, MarginsDialogRect(buffer.Columns()), "MarginsDialog");
     }
+    if (state.insertImageDialogActive)
+    {
+        DrawInsertImageDialog(buffer, state);
+        CheckDialogBoundsRight(buffer, InsertImageDialogRect(buffer.Columns()), "InsertImageDialog");
+    }
+    if (state.headerFooterDialogActive)
+    {
+        DrawHeaderFooterDialog(buffer, state);
+        CheckDialogBoundsRight(buffer, HeaderFooterDialogRect(buffer.Columns()), "HeaderFooterDialog");
+    }
 
     if (state.dialogActive)
     {
@@ -533,9 +543,7 @@ namespace
     std::string LiveShortcut(int menuIdx, int itemIdx, const MenuItemDef& item,
                              bool wordWrap, bool showWordCount,
                              bool spellCheckEnabled, bool highlightMisspelled,
-                             bool showMargins,
-                             bool headerShowFilename, bool headerShowPageNumber,
-                             bool footerShowFilename, bool footerShowPageNumber)
+                             bool showMargins)
     {
         // Options menu (menuIdx 6):
         // 0=Font, 1=Theme, 2=WordWrap, 3=WordCount, 4=Spell, 5=Highlight, 6=ShowMargins.
@@ -544,11 +552,6 @@ namespace
         if (menuIdx == 6 && itemIdx == 4) return spellCheckEnabled   ? "On" : "Off";
         if (menuIdx == 6 && itemIdx == 5) return highlightMisspelled ? "On" : "Off";
         if (menuIdx == 6 && itemIdx == 6) return showMargins         ? "On" : "Off";
-        // Page menu (menuIdx 4): 0=Margins..., 1..4 = header/footer slots.
-        if (menuIdx == 4 && itemIdx == 1) return headerShowFilename   ? "On" : "Off";
-        if (menuIdx == 4 && itemIdx == 2) return headerShowPageNumber ? "On" : "Off";
-        if (menuIdx == 4 && itemIdx == 3) return footerShowFilename   ? "On" : "Off";
-        if (menuIdx == 4 && itemIdx == 4) return footerShowPageNumber ? "On" : "Off";
         return item.shortcut;
     }
 
@@ -560,8 +563,6 @@ namespace
                                      bool wordWrap, bool showWordCount,
                                      bool spellCheckEnabled, bool highlightMisspelled,
                                      bool showMargins,
-                                     bool headerShowFilename, bool headerShowPageNumber,
-                                     bool footerShowFilename, bool footerShowPageNumber,
                                      const Layout& layout)
     {
         DropdownRect r{ 0, layout.ROW_SEP_TOP, 0, 0 };
@@ -578,9 +579,7 @@ namespace
             std::string sc = LiveShortcut(menuIdx, i, item,
                                           wordWrap, showWordCount,
                                           spellCheckEnabled, highlightMisspelled,
-                                          showMargins,
-                                          headerShowFilename, headerShowPageNumber,
-                                          footerShowFilename, footerShowPageNumber);
+                                          showMargins);
             if (!sc.empty())
                 w += static_cast<int>(sc.size()) + 2; // two-space gap
             innerWidth = std::max(innerWidth, w);
@@ -612,8 +611,6 @@ void RetroUi::DrawDropdownMenu(ScreenBuffer& buffer, int menuIdx, int activeItem
         state.wordWrap, state.showWordCount,
         state.spellCheckEnabled, state.highlightMisspelled,
         state.showMargins,
-        state.headerShowFilename, state.headerShowPageNumber,
-        state.footerShowFilename, state.footerShowPageNumber,
         m_layout);
 
     int startCol  = rect.startCol;
@@ -636,9 +633,12 @@ void RetroUi::DrawDropdownMenu(ScreenBuffer& buffer, int menuIdx, int activeItem
         int rowY            = startRow + 1 + i;
         const auto& item    = menu.items[i];
         bool isSeparator    = item.label.empty();
-        bool isHighlighted  = (!isSeparator && i == activeItem);
+        bool isEnabled      = IsMenuItemEnabled(menuIdx, i, state.insertCaptionEnabled);
+        bool isHighlighted  = (!isSeparator && isEnabled && i == activeItem);
 
-        Color itemFg = isHighlighted ? m_theme.reverseForeground : m_theme.normalText;
+        Color itemFg = isHighlighted ? m_theme.reverseForeground
+                       : isEnabled   ? m_theme.normalText
+                                     : m_theme.dimText;
         Color itemBg = isHighlighted ? m_theme.reverseBackground : m_theme.background;
 
         if (isSeparator)
@@ -670,11 +670,7 @@ void RetroUi::DrawDropdownMenu(ScreenBuffer& buffer, int menuIdx, int activeItem
                                                 state.wordWrap, state.showWordCount,
                                                 state.spellCheckEnabled,
                                                 state.highlightMisspelled,
-                                                state.showMargins,
-                                                state.headerShowFilename,
-                                                state.headerShowPageNumber,
-                                                state.footerShowFilename,
-                                                state.footerShowPageNumber);
+                                                state.showMargins);
             if (!shortcut.empty())
             {
                 Color scFg = isHighlighted ? m_theme.reverseForeground : m_theme.dimText;
@@ -716,16 +712,13 @@ int RetroUi::HitTestDropdownItem(int menuIdx, int cellCol, int cellRow,
                                  bool wordWrap, bool showWordCount,
                                  bool spellCheckEnabled, bool highlightMisspelled,
                                  bool showMargins,
-                                 bool headerShowFilename, bool headerShowPageNumber,
-                                 bool footerShowFilename, bool footerShowPageNumber) const
+                                 bool insertCaptionEnabled) const
 {
     DropdownRect rect = ComputeDropdownRect(
         menuIdx, screenColumns,
         wordWrap, showWordCount,
         spellCheckEnabled, highlightMisspelled,
         showMargins,
-        headerShowFilename, headerShowPageNumber,
-        footerShowFilename, footerShowPageNumber,
         m_layout);
     if (rect.outerWidth <= 0 || rect.numItems <= 0) return -1;
 
@@ -735,6 +728,11 @@ int RetroUi::HitTestDropdownItem(int menuIdx, int cellCol, int cellRow,
     if (itemRow < 0 || itemRow >= rect.numItems) return -1;
 
     if (cellCol < rect.startCol || cellCol >= rect.startCol + rect.outerWidth)
+        return -1;
+
+    // Disabled items absorb the hit silently so the click neither activates
+    // nor moves the highlight.
+    if (!IsMenuItemEnabled(menuIdx, itemRow, insertCaptionEnabled))
         return -1;
 
     return itemRow;
@@ -1428,6 +1426,286 @@ RetroUi::ColumnsHit RetroUi::HitTestColumnsDialog(int cellCol, int cellRow, int 
         if (tok == "ESC")   return ColumnsHit::CancelHint;
     }
     return ColumnsHit::None;
+}
+
+// ---------------------------------------------------------------------------
+// Insert Image dialog — Path / Caption / Padding (Insert > Image…)
+// Path and Caption are text fields (left-aligned, clipped on the right);
+// Padding is a small numeric inches field (matches Margins style).
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    constexpr int kInsertImgW = 70;
+    constexpr int kInsertImgH = 11;
+    const char* const kInsertImgHint = "[Tab] Next  [Enter] OK  [Esc] Cancel";
+    constexpr int kInsertImgPathCol     = 11;
+    constexpr int kInsertImgPathWidth   = 55;
+    constexpr int kInsertImgPaddingCol  = 11;
+    constexpr int kInsertImgPaddingWidth = 6;
+}
+
+RetroUi::Rect RetroUi::InsertImageDialogRect(int screenColumns) const
+{
+    return CenteredRect(screenColumns, m_layout.SCREEN_ROWS, kInsertImgW, kInsertImgH);
+}
+
+void RetroUi::DrawInsertImageDialog(ScreenBuffer& buffer, const EditorUiState& state)
+{
+    Rect r = InsertImageDialogRect(buffer.Columns());
+    const int x = r.x, y = r.y;
+    Color fg     = m_theme.normalText;
+    Color bg     = m_theme.background;
+    Color bright = m_theme.brightText;
+    Color dim    = m_theme.dimText;
+
+    DrawBox(buffer, x, y, r.w, r.h, fg, bg);
+
+    std::string title = " Insert Image ";
+    int titleX = x + (r.w - static_cast<int>(title.size())) / 2;
+    buffer.WriteText(titleX, y, title, bright, bg);
+
+    // Text fields (path / caption) — left-aligned, clipped on right; the focused
+    // field shows a blinking caret in the first empty cell after the text.
+    auto drawTextField = [&](int row, int col, int width,
+                              const std::string& text, bool focused) {
+        Color tfg = focused ? m_theme.reverseForeground : bright;
+        Color tbg = focused ? m_theme.reverseBackground : bg;
+        buffer.PutChar(x + col,             y + row, U'[', dim, bg);
+        buffer.PutChar(x + col + width - 1, y + row, U']', dim, bg);
+        for (int c = 1; c < width - 1; ++c)
+            buffer.PutChar(x + col + c, y + row, U' ', tfg, tbg);
+        int inner    = width - 2;
+        int textCols = std::min(static_cast<int>(text.size()), inner);
+        // Show the rightmost `inner` chars when text overflows so the caret is
+        // visible while the user is typing past the end.
+        int srcStart = static_cast<int>(text.size()) - textCols;
+        for (int i = 0; i < textCols; ++i)
+            buffer.PutChar(x + col + 1 + i, y + row,
+                           static_cast<char32_t>(static_cast<unsigned char>(text[srcStart + i])),
+                           tfg, tbg);
+    };
+
+    // Numeric field — right-aligned text; when the buffer overflows, show the
+    // RIGHTMOST chars so a freshly-typed digit lands visibly in the field
+    // (rather than disappearing past the right border).
+    auto drawNumField = [&](int row, int col, int width,
+                             const std::string& text, bool focused) {
+        Color tfg = focused ? m_theme.reverseForeground : bright;
+        Color tbg = focused ? m_theme.reverseBackground : bg;
+        buffer.PutChar(x + col,             y + row, U'[', dim, bg);
+        buffer.PutChar(x + col + width - 1, y + row, U']', dim, bg);
+        for (int c = 1; c < width - 1; ++c)
+            buffer.PutChar(x + col + c, y + row, U' ', tfg, tbg);
+        int inner    = width - 2;
+        int textCols = std::min(static_cast<int>(text.size()), inner);
+        int srcStart = static_cast<int>(text.size()) - textCols;
+        int startC   = col + 1 + (inner - textCols);
+        for (int i = 0; i < textCols; ++i)
+            buffer.PutChar(x + startC + i, y + row,
+                           static_cast<char32_t>(static_cast<unsigned char>(text[srcStart + i])),
+                           tfg, tbg);
+    };
+
+    buffer.WriteText(x + 2, y + 2, "Path:",    fg, bg);
+    drawTextField(2, kInsertImgPathCol, kInsertImgPathWidth,
+                  state.insertImagePathText,    state.insertImageFocusIdx == 0);
+
+    buffer.WriteText(x + 2, y + 4, "Caption:", fg, bg);
+    drawTextField(4, kInsertImgPathCol, kInsertImgPathWidth,
+                  state.insertImageCaptionText, state.insertImageFocusIdx == 1);
+
+    buffer.WriteText(x + 2, y + 6, "Padding:", fg, bg);
+    drawNumField(6, kInsertImgPaddingCol, kInsertImgPaddingWidth,
+                 state.insertImagePaddingText, state.insertImageFocusIdx == 2);
+    buffer.WriteText(x + kInsertImgPaddingCol + kInsertImgPaddingWidth + 1, y + 6,
+                     "inches  (text hold-off on all four sides)", dim, bg);
+
+    buffer.WriteText(x + 2, y + r.h - 2, kInsertImgHint, dim, bg);
+}
+
+RetroUi::InsertImageHit RetroUi::HitTestInsertImageDialog(int cellCol, int cellRow,
+                                                           int screenColumns) const
+{
+    Rect r = InsertImageDialogRect(screenColumns);
+    if (!r.Contains(cellCol, cellRow)) return InsertImageHit::None;
+    const int rx = cellCol - r.x, ry = cellRow - r.y;
+    auto in = [&](int col, int width) { return rx >= col && rx < col + width; };
+
+    if (ry == 2 && in(kInsertImgPathCol, kInsertImgPathWidth))    return InsertImageHit::Path;
+    if (ry == 4 && in(kInsertImgPathCol, kInsertImgPathWidth))    return InsertImageHit::Caption;
+    if (ry == 6 && in(kInsertImgPaddingCol, kInsertImgPaddingWidth)) return InsertImageHit::Padding;
+    if (ry == r.h - 2)
+    {
+        std::string tok = TokenAt(kInsertImgHint, r.x + 2, cellCol);
+        if (tok == "ENTER") return InsertImageHit::OkHint;
+        if (tok == "ESC")   return InsertImageHit::CancelHint;
+    }
+    return InsertImageHit::None;
+}
+
+// ---------------------------------------------------------------------------
+// Header / Footer dialog (Page > Header / Footer…)
+//
+// Six rows, one per (band × position): Header.L/C/R then Footer.L/C/R. Each
+// row shows a label, a [Kind] chip, and a preview/text field. Keyboard:
+//   Tab/Shift+Tab — cycle row focus
+//   Space         — cycle the focused row's Kind
+//   Up/Down       — cycle the focused row's PageNumber format (no-op otherwise)
+//   Type          — append to the CustomText buffer (no-op otherwise)
+//   Backspace     — delete last char of CustomText (no-op otherwise)
+//   Enter         — commit; Esc — cancel.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    constexpr int kHfW = 78;
+    constexpr int kHfH = 13;
+    const char* const kHfHint = "[Tab] Slot [Spc] Kind [Up/Dn] Fmt [Enter] OK [Esc] Cancel";
+    const char* const kHfLabels[6] = {
+        "Header Left:",
+        "Header Center:",
+        "Header Right:",
+        "Footer Left:",
+        "Footer Center:",
+        "Footer Right:",
+    };
+    const char* KindChip(HeaderFooterSlotKind k)
+    {
+        switch (k)
+        {
+            case HeaderFooterSlotKind::None:       return "None    ";
+            case HeaderFooterSlotKind::CustomText: return "Text    ";
+            case HeaderFooterSlotKind::Filename:   return "Filename";
+            case HeaderFooterSlotKind::PageNumber: return "Page #  ";
+            case HeaderFooterSlotKind::Date:       return "Date    ";
+        }
+        return "None    ";
+    }
+    const char* FmtPreview(PageNumberFormat f)
+    {
+        switch (f)
+        {
+            case PageNumberFormat::PageNofM: return "Page N of M";
+            case PageNumberFormat::PageN:    return "Page N";
+            case PageNumberFormat::N:        return "N";
+            case PageNumberFormat::NofM:     return "N of M";
+        }
+        return "";
+    }
+    constexpr int kHfRowFirst    = 2;
+    constexpr int kHfLabelCol    = 2;
+    constexpr int kHfKindCol     = 18;
+    constexpr int kHfKindWidth   = 10;
+    constexpr int kHfFieldCol    = 30;
+    constexpr int kHfFieldWidth  = 45;
+    int HfRowY(int slotIdx) { return kHfRowFirst + slotIdx + (slotIdx >= 3 ? 1 : 0); }
+}
+
+RetroUi::Rect RetroUi::HeaderFooterDialogRect(int screenColumns) const
+{
+    return CenteredRect(screenColumns, m_layout.SCREEN_ROWS, kHfW, kHfH);
+}
+
+void RetroUi::DrawHeaderFooterDialog(ScreenBuffer& buffer, const EditorUiState& state)
+{
+    Rect r = HeaderFooterDialogRect(buffer.Columns());
+    const int x = r.x, y = r.y;
+    Color fg     = m_theme.normalText;
+    Color bg     = m_theme.background;
+    Color bright = m_theme.brightText;
+    Color dim    = m_theme.dimText;
+
+    DrawBox(buffer, x, y, r.w, r.h, fg, bg);
+
+    std::string title = " Header / Footer ";
+    int titleX = x + (r.w - static_cast<int>(title.size())) / 2;
+    buffer.WriteText(titleX, y, title, bright, bg);
+
+    auto drawChip = [&](int row, int col, int width,
+                         const std::string& text, bool focused) {
+        Color tfg = focused ? m_theme.reverseForeground : bright;
+        Color tbg = focused ? m_theme.reverseBackground : bg;
+        buffer.PutChar(x + col,             y + row, U'[', dim, bg);
+        buffer.PutChar(x + col + width - 1, y + row, U']', dim, bg);
+        for (int c = 1; c < width - 1; ++c)
+            buffer.PutChar(x + col + c, y + row, U' ', tfg, tbg);
+        int inner = width - 2;
+        int n = std::min(static_cast<int>(text.size()), inner);
+        for (int i = 0; i < n; ++i)
+            buffer.PutChar(x + col + 1 + i, y + row,
+                           static_cast<char32_t>(static_cast<unsigned char>(text[i])),
+                           tfg, tbg);
+    };
+
+    auto drawField = [&](int row, int col, int width,
+                          const std::string& text, bool focused) {
+        Color tfg = focused ? m_theme.reverseForeground : bright;
+        Color tbg = focused ? m_theme.reverseBackground : bg;
+        buffer.PutChar(x + col,             y + row, U'[', dim, bg);
+        buffer.PutChar(x + col + width - 1, y + row, U']', dim, bg);
+        for (int c = 1; c < width - 1; ++c)
+            buffer.PutChar(x + col + c, y + row, U' ', tfg, tbg);
+        int inner    = width - 2;
+        int textCols = std::min(static_cast<int>(text.size()), inner);
+        int srcStart = static_cast<int>(text.size()) - textCols;
+        for (int i = 0; i < textCols; ++i)
+            buffer.PutChar(x + col + 1 + i, y + row,
+                           static_cast<char32_t>(static_cast<unsigned char>(text[srcStart + i])),
+                           tfg, tbg);
+    };
+
+    for (int idx = 0; idx < 6; ++idx)
+    {
+        int row = HfRowY(idx);
+        bool focused = (state.hfFocusIdx == idx);
+        const HeaderFooterSlot& slot = (idx < 3)
+            ? state.headerBand.slots[static_cast<size_t>(idx)]
+            : state.footerBand.slots[static_cast<size_t>(idx - 3)];
+        buffer.WriteText(x + kHfLabelCol, y + row,
+                         kHfLabels[idx], focused ? bright : fg, bg);
+        drawChip(row, kHfKindCol, kHfKindWidth, KindChip(slot.kind), focused);
+        std::string preview;
+        switch (slot.kind)
+        {
+            case HeaderFooterSlotKind::None:       preview = "(off)"; break;
+            case HeaderFooterSlotKind::CustomText: preview = slot.text; break;
+            case HeaderFooterSlotKind::Filename:   preview = "(document filename)"; break;
+            case HeaderFooterSlotKind::PageNumber: preview = FmtPreview(slot.fmt); break;
+            case HeaderFooterSlotKind::Date:       preview = "(today's date)"; break;
+        }
+        drawField(row, kHfFieldCol, kHfFieldWidth, preview, focused);
+    }
+
+    buffer.WriteText(x + 2, y + r.h - 2, kHfHint, dim, bg);
+}
+
+RetroUi::HeaderFooterClick RetroUi::HitTestHeaderFooterDialog(int cellCol, int cellRow,
+                                                                int screenColumns) const
+{
+    HeaderFooterClick click;
+    Rect r = HeaderFooterDialogRect(screenColumns);
+    if (!r.Contains(cellCol, cellRow)) return click;
+    const int rx = cellCol - r.x, ry = cellRow - r.y;
+
+    for (int idx = 0; idx < 6; ++idx)
+    {
+        if (ry == HfRowY(idx)
+            && rx >= kHfLabelCol
+            && rx <  kHfFieldCol + kHfFieldWidth)
+        {
+            click.hit = HeaderFooterHit::Row;
+            click.row = idx;
+            return click;
+        }
+    }
+    if (ry == r.h - 2)
+    {
+        std::string tok = TokenAt(kHfHint, r.x + 2, cellCol);
+        if (tok == "ENTER") click.hit = HeaderFooterHit::OkHint;
+        if (tok == "ESC")   click.hit = HeaderFooterHit::CancelHint;
+    }
+    return click;
 }
 
 // ---------------------------------------------------------------------------
