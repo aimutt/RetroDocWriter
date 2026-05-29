@@ -181,6 +181,13 @@ public:
     // this verbatim so on-screen and printed line breaks/pagination match.
     std::vector<PlacedSegment> ComputePlacedSegments(const DrawContext& ctx);
 
+    // The floats resolved by the same layout pass, in the same page-content
+    // coordinates as ComputePlacedSegments. The print path draws each float at
+    // these exact rects (rather than recomputing from FloatObject twips), so a
+    // column-anchored float prints at its column and the printed image occupies
+    // precisely the rect the text reflowed around.
+    std::vector<PlacedFloat> ComputePlacedFloats(const DrawContext& ctx);
+
 private:
     // Resolve and return the cache for a (face, pointSize) combo at the
     // current dpi, creating it on demand. Caches are kept in m_caches

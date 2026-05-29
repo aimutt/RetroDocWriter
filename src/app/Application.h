@@ -47,6 +47,7 @@ enum class PromptMode
     MarginsDialog,  // WYSIWYG page margins (per-document)
     ColumnsDialog,  // whole-document column count + gutter (\cols / \colsx)
     InsertImage,    // path-input prompt → embed a floating image (Insert > Image…)
+    CaptionDialog,  // text input → set the selected image float's caption (Insert > Caption…)
     ConfirmSaveAsRtf, // Ctrl+S on a .txt that has formatting: Y = SaveAs.rtf, N = flatten + save .txt
 };
 
@@ -248,6 +249,7 @@ private:
     void StartInsertImagePrompt();                 // opens the path-input prompt
     void InsertImageFromFile(const std::string& path);
     void InsertShape();                            // inserts a default box float
+    void OpenCaptionPrompt();                      // edit selected image float's caption
 
     // Columns dialog (Page > Columns…) — count + gutter, tab-cycled like Margins.
     void OpenColumnsDialog();
@@ -398,7 +400,8 @@ private:
     // Print dialog state — populated when OpenPrintDialog runs, persists
     // across invocations within the session so the user's last choices stick.
     PrintRequest             m_printRequest;
-    std::vector<PlacedSegment> m_printPlaced;  // screen layout shared with the print path
+    std::vector<PlacedSegment> m_printPlaced;        // screen layout shared with the print path
+    std::vector<PlacedFloat>   m_printPlacedFloats;  // resolved float rects shared with print
     std::vector<std::string> m_printerList;
     int                      m_printPrinterIdx = 0;
     PrintField               m_printFocus      = PrintField::Printer;

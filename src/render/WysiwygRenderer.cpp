@@ -706,6 +706,47 @@ WysiwygRenderer::ComputePlacedSegments(const DrawContext& ctx)
     return out;
 }
 
+std::vector<PlacedFloat>
+WysiwygRenderer::ComputePlacedFloats(const DrawContext& ctx)
+{
+    std::vector<PlacedFloat> out;
+    if (!ctx.buffer || !ctx.formatted || ctx.formatted->Floats().empty()) return out;
+    const int dpi = std::max(48, ctx.screenDpi);
+
+    const int pageW   = static_cast<int>(kPaperWidthIn  * dpi);
+    const int pageH   = static_cast<int>(kPaperHeightIn * dpi);
+    const int mLeft   = static_cast<int>(ctx.margins.leftIn   * dpi);
+    const int mRight  = static_cast<int>(ctx.margins.rightIn  * dpi);
+    const int mTop    = static_cast<int>(ctx.margins.topIn    * dpi);
+    const int mBottom = static_cast<int>(ctx.margins.bottomIn * dpi);
+    const int usableW = std::max(1, pageW - mLeft - mRight);
+    const int usableH = std::max(1, pageH - mTop  - mBottom);
+
+    LayoutPass pass;
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
+    const std::vector<FloatObject>& floatObjs = ctx.formatted->Floats();
+    BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, &floatObjs,
+                    [&](FontFace f, int p) { return CacheFor(f, p, dpi); },
+                    [&](FontFace f, int p, unsigned int cp) {
+                        int px = std::max(1, (p * dpi + 36) / 72);
+                        return SubpxAdvance(f, px, cp);
+                    });
+
+    // Coordinates match ComputePlacedSegments: content-area-relative (the
+    // ResolvedFloat rects are already relative to mLeft/mTop and bake in the
+    // active column's x-base), at this DPI.
+    const FloatObject* base = &floatObjs[0];
+    for (const auto& rf : pass.floats)
+    {
+        if (!rf.obj) continue;
+        out.push_back(PlacedFloat{ static_cast<int>(rf.obj - base), rf.page,
+                                   rf.xLeft, rf.yTop, rf.xRight, rf.yBottom });
+    }
+    return out;
+}
+
 WysiwygRenderer::FloatHit WysiwygRenderer::HitTestFloat(const DrawContext& ctx, int px, int py)
 {
     FloatHit miss;

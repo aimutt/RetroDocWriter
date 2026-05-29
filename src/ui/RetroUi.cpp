@@ -537,19 +537,18 @@ namespace
                              bool headerShowFilename, bool headerShowPageNumber,
                              bool footerShowFilename, bool footerShowPageNumber)
     {
-        // Options is menu idx 7 in RetroDocWriter (after Format was inserted at 2).
-        // Options menu (menuIdx 7):
+        // Options menu (menuIdx 6):
         // 0=Font, 1=Theme, 2=WordWrap, 3=WordCount, 4=Spell, 5=Highlight, 6=ShowMargins.
-        if (menuIdx == 7 && itemIdx == 2) return wordWrap            ? "On" : "Off";
-        if (menuIdx == 7 && itemIdx == 3) return showWordCount       ? "On" : "Off";
-        if (menuIdx == 7 && itemIdx == 4) return spellCheckEnabled   ? "On" : "Off";
-        if (menuIdx == 7 && itemIdx == 5) return highlightMisspelled ? "On" : "Off";
-        if (menuIdx == 7 && itemIdx == 6) return showMargins         ? "On" : "Off";
-        // Page menu (menuIdx 5): 0=Margins..., 1..4 = header/footer slots.
-        if (menuIdx == 5 && itemIdx == 1) return headerShowFilename   ? "On" : "Off";
-        if (menuIdx == 5 && itemIdx == 2) return headerShowPageNumber ? "On" : "Off";
-        if (menuIdx == 5 && itemIdx == 3) return footerShowFilename   ? "On" : "Off";
-        if (menuIdx == 5 && itemIdx == 4) return footerShowPageNumber ? "On" : "Off";
+        if (menuIdx == 6 && itemIdx == 2) return wordWrap            ? "On" : "Off";
+        if (menuIdx == 6 && itemIdx == 3) return showWordCount       ? "On" : "Off";
+        if (menuIdx == 6 && itemIdx == 4) return spellCheckEnabled   ? "On" : "Off";
+        if (menuIdx == 6 && itemIdx == 5) return highlightMisspelled ? "On" : "Off";
+        if (menuIdx == 6 && itemIdx == 6) return showMargins         ? "On" : "Off";
+        // Page menu (menuIdx 4): 0=Margins..., 1..4 = header/footer slots.
+        if (menuIdx == 4 && itemIdx == 1) return headerShowFilename   ? "On" : "Off";
+        if (menuIdx == 4 && itemIdx == 2) return headerShowPageNumber ? "On" : "Off";
+        if (menuIdx == 4 && itemIdx == 3) return footerShowFilename   ? "On" : "Off";
+        if (menuIdx == 4 && itemIdx == 4) return footerShowPageNumber ? "On" : "Off";
         return item.shortcut;
     }
 
