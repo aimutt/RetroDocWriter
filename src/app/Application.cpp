@@ -1447,10 +1447,14 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
         auto hit = m_ui->HitTestMarginsDialog(cellCol, cellRow, m_screenColumns);
         switch (hit)
         {
-            case RetroUi::MarginsHit::Top:    m_marginFocusIdx = 0; m_needsRedraw = true; break;
-            case RetroUi::MarginsHit::Bottom: m_marginFocusIdx = 1; m_needsRedraw = true; break;
-            case RetroUi::MarginsHit::Left:   m_marginFocusIdx = 2; m_needsRedraw = true; break;
-            case RetroUi::MarginsHit::Right:  m_marginFocusIdx = 3; m_needsRedraw = true; break;
+            case RetroUi::MarginsHit::Top:
+                m_marginFocusIdx = 0; m_marginEditPristine[0] = true; m_needsRedraw = true; break;
+            case RetroUi::MarginsHit::Bottom:
+                m_marginFocusIdx = 1; m_marginEditPristine[1] = true; m_needsRedraw = true; break;
+            case RetroUi::MarginsHit::Left:
+                m_marginFocusIdx = 2; m_marginEditPristine[2] = true; m_needsRedraw = true; break;
+            case RetroUi::MarginsHit::Right:
+                m_marginFocusIdx = 3; m_marginEditPristine[3] = true; m_needsRedraw = true; break;
             case RetroUi::MarginsHit::OkHint:     CloseMarginsDialog(true);  m_needsRedraw = true; break;
             case RetroUi::MarginsHit::CancelHint: CloseMarginsDialog(false); m_needsRedraw = true; break;
             default: break;
@@ -3936,6 +3940,7 @@ void Application::OpenMarginsDialog()
     m_marginEditText[1] = fmt(m_margins.bottomIn);
     m_marginEditText[2] = fmt(m_margins.leftIn);
     m_marginEditText[3] = fmt(m_margins.rightIn);
+    for (int i = 0; i < 4; ++i) m_marginEditPristine[i] = true;
     m_marginFocusIdx    = 0;
     m_promptMode        = PromptMode::MarginsDialog;
     m_statusMessage.clear();
@@ -3949,16 +3954,20 @@ void Application::CloseMarginsDialog(bool commit)
         m_statusMessage = "Ready";
         return;
     }
-    auto parse = [&](const std::string& s, double def) {
-        if (s.empty()) return def;
-        try { return std::stod(s); } catch (...) { return def; }
+    // Empty input is an explicit "no margin" (0 inches) — the user cleared
+    // the field on purpose. Garbage input shouldn't be possible (the text
+    // editor filters to digits + a single dot), but treat it the same way
+    // for safety.
+    auto parse = [&](const std::string& s) {
+        if (s.empty()) return 0.0;
+        try { return std::stod(s); } catch (...) { return 0.0; }
     };
     auto clamp = [](double v) { return std::clamp(v, 0.0, 5.0); };
 
-    m_margins.topIn    = clamp(parse(m_marginEditText[0], m_margins.topIn));
-    m_margins.bottomIn = clamp(parse(m_marginEditText[1], m_margins.bottomIn));
-    m_margins.leftIn   = clamp(parse(m_marginEditText[2], m_margins.leftIn));
-    m_margins.rightIn  = clamp(parse(m_marginEditText[3], m_margins.rightIn));
+    m_margins.topIn    = clamp(parse(m_marginEditText[0]));
+    m_margins.bottomIn = clamp(parse(m_marginEditText[1]));
+    m_margins.leftIn   = clamp(parse(m_marginEditText[2]));
+    m_margins.rightIn  = clamp(parse(m_marginEditText[3]));
 
     m_promptMode    = PromptMode::None;
     m_statusMessage = "Margins updated";
@@ -3968,6 +3977,9 @@ void Application::CloseMarginsDialog(bool commit)
 void Application::MarginCycleField(int dir)
 {
     m_marginFocusIdx = ((m_marginFocusIdx + dir) % 4 + 4) % 4;
+    // Newly-focused field re-arms its pristine bit so the first typed digit
+    // replaces the pre-filled value (Excel-style edit-on-focus).
+    m_marginEditPristine[m_marginFocusIdx] = true;
 }
 
 void Application::MarginAdjustField(int dir)
@@ -3982,6 +3994,9 @@ void Application::MarginAdjustField(int dir)
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%.2f", v);
     m_marginEditText[m_marginFocusIdx] = buf;
+    // The user is actively dialing in a value — subsequent typed digits
+    // should append (refine) rather than replace.
+    m_marginEditPristine[m_marginFocusIdx] = false;
 }
 
 void Application::MarginTextEdit(char ch)
@@ -3991,6 +4006,13 @@ void Application::MarginTextEdit(char ch)
     bool isDot   = (ch == '.');
     if (!isDigit && !isDot) return;
     std::string& s = m_marginEditText[m_marginFocusIdx];
+    // First typed char after focus arrives: replace the pre-filled value
+    // instead of appending to it.
+    if (m_marginEditPristine[m_marginFocusIdx])
+    {
+        s.clear();
+        m_marginEditPristine[m_marginFocusIdx] = false;
+    }
     if (isDot && s.find('.') != std::string::npos) return;
     if (s.size() >= 5) return;
     s.push_back(ch);
@@ -4001,6 +4023,8 @@ void Application::MarginBackspace()
     if (m_marginFocusIdx < 0 || m_marginFocusIdx > 3) return;
     std::string& s = m_marginEditText[m_marginFocusIdx];
     if (!s.empty()) s.pop_back();
+    // Once they've started editing, stop replacing on the next keystroke.
+    m_marginEditPristine[m_marginFocusIdx] = false;
 }
 
 // --- Insert floating objects ----------------------------------------------

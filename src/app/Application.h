@@ -446,6 +446,12 @@ private:
     // Margins dialog edit-in-progress strings (top, bottom, left, right)
     std::string      m_marginEditText[4];
     int              m_marginFocusIdx  = 0;
+    // Per-field "untouched since gaining focus" bit. While true, the first
+    // typed digit/dot clears the pre-filled value and replaces it with the
+    // typed char (Excel-style edit-on-focus). Reset to true every time a
+    // field gains focus; cleared on any user edit (typed char, Up/Down
+    // adjust, Backspace).
+    bool             m_marginEditPristine[4] = {true, true, true, true};
     // Columns dialog edit-in-progress strings (count, gutter-in-inches)
     std::string      m_columnsEditText[2];
     int              m_columnsFocusIdx = 0;
