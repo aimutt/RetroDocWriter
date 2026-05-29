@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 
@@ -77,6 +78,12 @@ Application::Application()
     SDL_StartTextInput(m_window->GetWindow());
 
     LoadGlobalSettings();
+
+    // Garbage-collect stale per-document entries from the central store
+    // once per launch. Entries whose source file has been gone for at least
+    // this many days are deleted; the grace window lets an undelete keep
+    // the document's saved margins/header/footer/etc. intact.
+    DocumentSettingsStore::CollectGarbage(30);
 
     m_lastBlinkTime = SDL_GetTicks();
     m_running = true;
@@ -3524,6 +3531,31 @@ void Application::LoadGlobalSettings()
     std::string dir = UserConfigDir();
     if (dir.empty()) return;
 
+    // One-shot per-user migration. Earlier builds wrote global config to
+    // %LOCALAPPDATA%\RetroEdit\ (a leftover from when this lived in a
+    // monorepo with the sibling RetroEdit product). If the new
+    // %APPDATA%\RetroDocWriter\config.ini doesn't exist yet but the legacy
+    // one does, copy it forward (along with user_dictionary.txt). The old
+    // files are left alone so a previous binary still works.
+    namespace fs = std::filesystem;
+    {
+        std::string legacyDir = LegacyUserConfigDir();
+        if (!legacyDir.empty())
+        {
+            std::error_code ec;
+            if (!fs::exists(dir + "config.ini", ec)
+                && fs::exists(legacyDir + "config.ini", ec))
+                fs::copy_file(legacyDir + "config.ini",
+                              dir + "config.ini",
+                              fs::copy_options::skip_existing, ec);
+            if (!fs::exists(dir + "user_dictionary.txt", ec)
+                && fs::exists(legacyDir + "user_dictionary.txt", ec))
+                fs::copy_file(legacyDir + "user_dictionary.txt",
+                              dir + "user_dictionary.txt",
+                              fs::copy_options::skip_existing, ec);
+        }
+    }
+
     FileSettings s;
     if (s.Load(dir + "config.ini"))
     {
@@ -4336,20 +4368,35 @@ void Application::ApplyFileSettings(const FileSettings& s)
 
 void Application::WriteSidecarForCurrentDocument()
 {
-    std::string sidecar = FileSettings::SidecarPath(m_document->Filename());
-    if (sidecar.empty()) return;
+    // The function name is a vestige from when settings lived in a
+    // `<doc>.retroedit` file next to the document. They now live in the
+    // central per-user store under %APPDATA%\RetroDocWriter\documents\;
+    // call sites are unchanged so the rename can land as a separate diff.
+    if (m_document->Filename().empty()) return;
     FileSettings s;
     CaptureFileSettings(s);
-    s.Save(sidecar);  // silent on failure - sidecar is best-effort
+    DocumentSettingsStore::WriteFor(m_document->Filename(), s);
 }
 
 void Application::LoadSidecarForCurrentDocument()
 {
-    std::string sidecar = FileSettings::SidecarPath(m_document->Filename());
-    if (sidecar.empty()) return;
+    if (m_document->Filename().empty()) return;
     FileSettings s;
-    if (s.Load(sidecar))
+    if (DocumentSettingsStore::ReadFor(m_document->Filename(), s))
+    {
         ApplyFileSettings(s);
+        return;
+    }
+    // One-time migration for users with existing `.retroedit` sidecars
+    // alongside their documents: read the sidecar, populate the central
+    // store from it, then apply. Leave the sidecar file itself on disk —
+    // it's harmless and the user can delete it themselves when ready.
+    std::string legacy = FileSettings::SidecarPath(m_document->Filename());
+    if (!legacy.empty() && s.Load(legacy))
+    {
+        DocumentSettingsStore::WriteFor(m_document->Filename(), s);
+        ApplyFileSettings(s);
+    }
 }
 
 void Application::HandleWindowResized(int newW, int newH)

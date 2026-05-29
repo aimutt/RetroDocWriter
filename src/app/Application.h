@@ -12,6 +12,7 @@
 #include "editor/Dictionary.h"
 #include "editor/HeaderFooter.h"
 #include "editor/RichFileDocument.h"
+#include "editor/DocumentSettingsStore.h"
 #include "editor/FileSettings.h"
 #include "editor/Selection.h"
 #include "editor/RichUndoHistory.h"

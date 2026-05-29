@@ -37,6 +37,7 @@ add_executable(RetroDocWriter
     src/app/Application.cpp
     src/editor/Dictionary.cpp
     src/editor/Dictionary.gen.cpp
+    src/editor/DocumentSettingsStore.cpp
     src/editor/FileDocument.cpp
     src/editor/FileSettings.cpp
     src/editor/FormattedTextBuffer.cpp
