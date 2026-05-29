@@ -434,12 +434,11 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
             case SDL_SCANCODE_E: OpenMenu(1); return;   // Edit
             case SDL_SCANCODE_R: OpenMenu(2); return;   // foRmat
             case SDL_SCANCODE_S: OpenMenu(3); return;   // Search
-            case SDL_SCANCODE_V: OpenMenu(4); return;   // View
-            case SDL_SCANCODE_P: OpenMenu(5); return;   // Page
-            case SDL_SCANCODE_T: OpenMenu(6); return;   // Tools
-            case SDL_SCANCODE_O: OpenMenu(7); return;   // Options
+            case SDL_SCANCODE_P: OpenMenu(4); return;   // Page
+            case SDL_SCANCODE_T: OpenMenu(5); return;   // Tools
+            case SDL_SCANCODE_O: OpenMenu(6); return;   // Options
+            case SDL_SCANCODE_I: OpenMenu(7); return;   // Insert
             case SDL_SCANCODE_H: OpenMenu(8); return;   // Help
-            case SDL_SCANCODE_I: OpenMenu(9); return;   // Insert
             default: return;
         }
     }
@@ -802,6 +801,7 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
             m_promptMode == PromptMode::Open
          || m_promptMode == PromptMode::SaveAs
          || m_promptMode == PromptMode::InsertImage
+         || m_promptMode == PromptMode::CaptionDialog
          || m_promptMode == PromptMode::Find
          || m_promptMode == PromptMode::AddWordDialog
          || m_promptMode == PromptMode::RemoveWordDialog
@@ -1869,6 +1869,7 @@ void Application::HandleTextInput(const char* text)
         if (m_promptMode == PromptMode::Open            ||
             m_promptMode == PromptMode::SaveAs          ||
             m_promptMode == PromptMode::InsertImage     ||
+            m_promptMode == PromptMode::CaptionDialog   ||
             m_promptMode == PromptMode::AddWordDialog   ||
             m_promptMode == PromptMode::RemoveWordDialog||
             m_promptMode == PromptMode::CheckWordDialog)
@@ -2502,6 +2503,20 @@ void Application::CommitPrompt()
         if (!m_promptText.empty())
             InsertImageFromFile(m_promptText);   // path used verbatim (not RTF-defaulted)
     }
+    else if (mode == PromptMode::CaptionDialog)
+    {
+        // Empty text is valid — it removes the caption. The selection is held
+        // through the modal, so m_selectedFloat still points at the image.
+        auto& floats = m_document->Buffer().FloatsMutable();
+        if (m_selectedFloat >= 0 && m_selectedFloat < static_cast<int>(floats.size()))
+        {
+            PushUndoBeforeEdit();
+            floats[static_cast<size_t>(m_selectedFloat)].caption = m_promptText;
+            m_document->MarkDirty();
+            UpdateWindowTitle();
+            m_statusMessage = m_promptText.empty() ? "Caption removed" : "Caption set";
+        }
+    }
 
     m_promptText.clear();
 }
@@ -2694,7 +2709,7 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
             }
             break;
 
-        case 5: // Page
+        case 4: // Page
             switch (itemIdx)
             {
                 case 0: OpenMarginsDialog(); break; // Margins...
@@ -2707,7 +2722,7 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
             }
             break;
 
-        case 6: // Tools
+        case 5: // Tools
             switch (itemIdx)
             {
                 case 0: OpenAddWordDialog();    break;
@@ -2717,7 +2732,7 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
             }
             break;
 
-        case 7: // Options
+        case 6: // Options
             switch (itemIdx)
             {
                 case 0: OpenFontDialog();  break;   // Font...
@@ -2731,20 +2746,21 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
             }
             break;
 
+        case 7: // Insert
+            switch (itemIdx)
+            {
+                case 0: StartInsertImagePrompt(); break; // Image...
+                case 1: InsertShape();            break; // Shape...
+                case 2: OpenCaptionPrompt();      break; // Caption...
+                default: break;
+            }
+            break;
+
         case 8: // Help
             switch (itemIdx)
             {
                 case 0: m_promptMode = PromptMode::HelpScreen;  break;
                 case 2: m_promptMode = PromptMode::AboutScreen; break;
-                default: break;
-            }
-            break;
-
-        case 9: // Insert
-            switch (itemIdx)
-            {
-                case 0: StartInsertImagePrompt(); break; // Image...
-                case 1: InsertShape();            break; // Shape...
                 default: break;
             }
             break;
@@ -3472,7 +3488,10 @@ void Application::ClosePrintDialog(bool commit)
         WysiwygRenderer::DrawContext lctx = BuildWysiwygDrawContext();
         m_printPlaced = m_wysiwyg ? m_wysiwyg->ComputePlacedSegments(lctx)
                                   : std::vector<PlacedSegment>{};
+        m_printPlacedFloats = m_wysiwyg ? m_wysiwyg->ComputePlacedFloats(lctx)
+                                        : std::vector<PlacedFloat>{};
         m_printRequest.placedSegments = &m_printPlaced;
+        m_printRequest.placedFloats   = &m_printPlacedFloats;
         m_printRequest.layoutDpi      = lctx.screenDpi;
     }
 
@@ -3728,6 +3747,23 @@ void Application::StartInsertImagePrompt()
 {
     m_promptMode = PromptMode::InsertImage;
     m_promptText.clear();
+    m_statusMessage.clear();
+}
+
+void Application::OpenCaptionPrompt()
+{
+    // Captions belong to image floats. Require one selected (click the image
+    // first; a freshly inserted image is auto-selected). Pre-load the current
+    // caption so the dialog edits rather than replaces it.
+    const auto& floats = m_document->Buffer().Floats();
+    if (m_selectedFloat < 0 || m_selectedFloat >= static_cast<int>(floats.size())
+        || floats[static_cast<size_t>(m_selectedFloat)].kind != FloatObject::Kind::Image)
+    {
+        m_statusMessage = "Select an image first (click it), then Insert > Caption…";
+        return;
+    }
+    m_promptMode = PromptMode::CaptionDialog;
+    m_promptText = floats[static_cast<size_t>(m_selectedFloat)].caption;
     m_statusMessage.clear();
 }
 
@@ -4042,6 +4078,7 @@ void Application::Render()
     uiState.dialogActive = (m_promptMode == PromptMode::Open             ||
                             m_promptMode == PromptMode::SaveAs           ||
                             m_promptMode == PromptMode::InsertImage      ||
+                            m_promptMode == PromptMode::CaptionDialog    ||
                             m_promptMode == PromptMode::Find             ||
                             m_promptMode == PromptMode::ConfirmExit      ||
                             m_promptMode == PromptMode::ConfirmExitClean ||
@@ -4075,6 +4112,11 @@ void Application::Render()
         case PromptMode::InsertImage:
             uiState.dialogTitle   = "Insert Image";
             uiState.dialogPrompt  = "Image file path:";
+            uiState.dialogPrompt2 = "";
+            break;
+        case PromptMode::CaptionDialog:
+            uiState.dialogTitle   = "Image Caption";
+            uiState.dialogPrompt  = "Caption (blank to remove):";
             uiState.dialogPrompt2 = "";
             break;
         case PromptMode::Find:

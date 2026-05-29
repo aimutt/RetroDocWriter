@@ -968,31 +968,63 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
     // text), at their resolved device-pixel rects. Mirrors WysiwygRenderer.
     const int pageLeftDev = usableLeft - marginLeftPx;   // physical page left (approx)
     const int pageTopDev  = usableTop  - marginTopPx;    // physical page top  (approx)
+    // Scale factors for the shared layout (same as the placedSegments path):
+    // resolved float rects are content-area-relative px at req.layoutDpi.
+    const double fsx = static_cast<double>(dpiX) / std::max(1, req.layoutDpi);
+    const double fsy = static_cast<double>(dpiY) / std::max(1, req.layoutDpi);
     auto drawFloatsForPage = [&](int page, bool below) {
         if (!req.floats) return;
-        std::vector<const FloatObject*> list;
-        for (const auto& f : *req.floats)
+
+        // One device-pixel rect per float to draw this pass, paired with its
+        // object. Prefer the layout-resolved rects (placedFloats) — they bake
+        // in the column x-base and match the rect the text reflowed around;
+        // fall back to recomputing from FloatObject twips only when the shared
+        // layout wasn't supplied.
+        struct DrawItem { const FloatObject* obj; int x, y, w, h; };
+        std::vector<DrawItem> list;
+
+        if (req.placedFloats && !req.placedFloats->empty())
         {
-            if (f.belowText != below) continue;
-            int r = std::clamp(f.anchorRow, 0, std::max(0, lineCount - 1));
-            if (lineCount <= 0 || rowPage[r] != page) continue;
-            list.push_back(&f);
+            const int nFloats = static_cast<int>(req.floats->size());
+            for (const PlacedFloat& pf : *req.placedFloats)
+            {
+                if (pf.page + 1 != page) continue;
+                if (pf.floatIndex < 0 || pf.floatIndex >= nFloats) continue;
+                const FloatObject& f = (*req.floats)[static_cast<size_t>(pf.floatIndex)];
+                if (f.belowText != below) continue;
+                int x = usableLeft + static_cast<int>(pf.xLeft * fsx + 0.5);
+                int y = usableTop  + static_cast<int>(pf.yTop  * fsy + 0.5);
+                int w = static_cast<int>((pf.xRight  - pf.xLeft) * fsx + 0.5);
+                int h = static_cast<int>((pf.yBottom - pf.yTop)  * fsy + 0.5);
+                if (w <= 0 || h <= 0) continue;
+                list.push_back({ &f, x, y, w, h });
+            }
+        }
+        else
+        {
+            for (const auto& f : *req.floats)
+            {
+                if (f.belowText != below) continue;
+                int r = std::clamp(f.anchorRow, 0, std::max(0, lineCount - 1));
+                if (lineCount <= 0 || rowPage[r] != page) continue;
+                int originX = (f.hRef == FloatObject::HRef::Page) ? pageLeftDev : usableLeft;
+                int originY = pageTopDev;
+                if (f.vRef == FloatObject::VRef::Margin)         originY = usableTop;
+                else if (f.vRef == FloatObject::VRef::Paragraph) originY = usableTop + rowY[r];
+                int x = originX + MulDiv(f.left, dpiX, 1440);
+                int y = originY + MulDiv(f.top,  dpiY, 1440);
+                int w = MulDiv(f.right - f.left, dpiX, 1440);
+                int h = MulDiv(f.bottom - f.top, dpiY, 1440);
+                if (w <= 0 || h <= 0) continue;
+                list.push_back({ &f, x, y, w, h });
+            }
         }
         std::stable_sort(list.begin(), list.end(),
-                         [](const FloatObject* a, const FloatObject* b) { return a->zOrder < b->zOrder; });
-        for (const FloatObject* fp : list)
+                         [](const DrawItem& a, const DrawItem& b) { return a.obj->zOrder < b.obj->zOrder; });
+        for (const DrawItem& it : list)
         {
-            const FloatObject& f = *fp;
-            int r = std::clamp(f.anchorRow, 0, std::max(0, lineCount - 1));
-            int originX = (f.hRef == FloatObject::HRef::Page) ? pageLeftDev : usableLeft;
-            int originY = pageTopDev;
-            if (f.vRef == FloatObject::VRef::Margin)         originY = usableTop;
-            else if (f.vRef == FloatObject::VRef::Paragraph) originY = usableTop + rowY[r];
-            int x = originX + MulDiv(f.left, dpiX, 1440);
-            int y = originY + MulDiv(f.top,  dpiY, 1440);
-            int w = MulDiv(f.right - f.left, dpiX, 1440);
-            int h = MulDiv(f.bottom - f.top, dpiY, 1440);
-            if (w <= 0 || h <= 0) continue;
+            const FloatObject& f = *it.obj;
+            int x = it.x, y = it.y, w = it.w, h = it.h;
 
             if (f.kind == FloatObject::Kind::Image)
             {

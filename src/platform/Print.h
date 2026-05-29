@@ -77,6 +77,14 @@ struct PrintRequest
     // in (the on-screen 96), scaled to the printer's DPI at draw time.
     const std::vector<PlacedSegment>* placedSegments = nullptr;
     int                               layoutDpi      = 96;
+
+    // Optional pre-resolved float rects from the same layout pass (px at
+    // `layoutDpi`, content-area-relative — see PlacedFloat). When supplied, the
+    // print path draws each float at its resolved rect (scaled to the printer's
+    // DPI) instead of recomputing from FloatObject twips, so column-anchored
+    // floats print at their column and the printed image occupies exactly the
+    // rect the text reflowed around. `floatIndex` indexes `floats` above.
+    const std::vector<PlacedFloat>* placedFloats = nullptr;
 };
 
 // Returns the installed printers. First entry is the system default (or the

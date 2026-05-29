@@ -17,10 +17,10 @@ struct MenuDef
 
 // Menu mnemonic characters (Alt+letter to open each menu)
 // Indices match GetMenuDefs() order:
-// File=0, Edit=1, Format=2, Search=3, View=4, Page=5, Tools=6, Options=7, Help=8, Insert=9
+// File=0, Edit=1, Format=2, Search=3, Page=4, Tools=5, Options=6, Insert=7, Help=8
 inline char GetMenuMnemonic(int menuIdx)
 {
-    static const char mnemonics[] = { 'f', 'e', 'r', 's', 'v', 'p', 't', 'o', 'h', 'i' };
+    static const char mnemonics[] = { 'f', 'e', 'r', 's', 'p', 't', 'o', 'i', 'h' };
     if (menuIdx < 0 || menuIdx >= static_cast<int>(sizeof(mnemonics)))
         return '\0';
     return mnemonics[menuIdx];
@@ -64,14 +64,11 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "",                    ""       },
             { "Insert Page Break",   "^Enter" },
         }},
-        { "Search", 22, {
+        { "Search", 21, {
             { "Find...",      "^F"   },
             { "Find Next",    "F6"   },
         }},
-        { "View", 30, {
-            { "(coming soon)", "" },
-        }},
-        { "Page", 36, {
+        { "Page", 29, {
             { "Margins...",          ""  },
             // Four independent slots; each shows On/Off live at draw time.
             { "Header: File Name",   ""  },
@@ -80,13 +77,13 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "Footer: Page Number", ""  },
             { "Columns...",          ""  },
         }},
-        { "Tools", 42, {
+        { "Tools", 35, {
             { "Add to Dictionary...",      "" },
             { "Remove from Dictionary...", "" },
             { "",                          "" },
             { "Check Word...",             "" },
         }},
-        { "Options", 49, {
+        { "Options", 42, {
             { "Font...",              ""     },
             { "Theme...",             ""     },
             { "Word Wrap",            ""     },   // shortcut column shows On/Off at draw time
@@ -95,15 +92,15 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "Highlight Misspelled", ""     },   // shortcut column shows On/Off at draw time
             { "Show Margins",         ""     },   // shortcut column shows On/Off at draw time
         }},
-        { "Help", 58, {
+        { "Insert", 51, {
+            { "Image...",     ""     },
+            { "Shape...",     ""     },
+            { "Caption...",   ""     },
+        }},
+        { "Help", 59, {
             { "Help",         "F1"   },
             { "",             ""     },
             { "About...",     ""     },
-        }},
-        // Appended last (index 9) so existing menu indices/barCols are unchanged.
-        { "Insert", 64, {
-            { "Image...",     ""     },
-            { "Shape...",     ""     },
         }},
     };
     return s_menus;
@@ -116,10 +113,10 @@ inline const std::vector<MenuDef>& GetMenuDefs()
 // for these same items.
 inline bool IsToggleMenuItem(int menuIdx, int itemIdx)
 {
-    // Page menu (idx 5): Header/Footer slots 1..4.
-    if (menuIdx == 5 && itemIdx >= 1 && itemIdx <= 4) return true;
-    // Options menu (idx 7): Word Wrap, Word Count, Spell Check,
+    // Page menu (idx 4): Header/Footer slots 1..4.
+    if (menuIdx == 4 && itemIdx >= 1 && itemIdx <= 4) return true;
+    // Options menu (idx 6): Word Wrap, Word Count, Spell Check,
     // Highlight Misspelled, Show Margins (items 2..6).
-    if (menuIdx == 7 && itemIdx >= 2 && itemIdx <= 6) return true;
+    if (menuIdx == 6 && itemIdx >= 2 && itemIdx <= 6) return true;
     return false;
 }
