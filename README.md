@@ -75,6 +75,8 @@ tools/
   gen_dictionary.ps1  Regenerate src/editor/Dictionary.gen.cpp from words.txt
 ```
 
+![RetroDocWriter screenshot](assets/screenshots/RetroDocWriterScreenshotGreen.png)
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
