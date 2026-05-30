@@ -151,6 +151,7 @@ void Application::OpenFile(const std::string& path)
         m_viewportLeft  = 0;
         m_selection.Clear();
         m_undoHistory.ClearAll();
+        m_undoHistory.MarkSaved();          // loaded buffer == on-disk state
         LoadSidecarForCurrentDocument();
 
         // RTF loads carry document font + size in their header. Apply them
@@ -2366,6 +2367,11 @@ void Application::ApplyUndoState(const RichUndoState& s)
     m_cursor.column = s.cursorCol;
     m_selection.Clear();
     m_document->MarkDirty();
+    // Undo/redo can return the buffer to the exact timeline position the
+    // document last had on disk. When it does, clear the dirty bit so the
+    // title-bar asterisk goes away and a close-without-save passes silently.
+    if (m_undoHistory.IsAtSavedState())
+        m_document->MarkClean();
     ClampCursorToLine();
     ScrollViewport();
     UpdateWindowTitle();
@@ -2542,6 +2548,7 @@ void Application::NewFile()
     m_viewportLeft  = 0;
     m_selection.Clear();
     m_undoHistory.ClearAll();
+    m_undoHistory.MarkSaved();           // empty buffer == "on-disk" state
     m_lastActionWasInsert = false;
     // Per-doc header/footer slots all start off on a fresh document.
     m_header = HeaderFooterBand{};
@@ -2706,6 +2713,9 @@ bool Application::SaveDocument()
                          CurrentRtfPage()))
     {
         WriteSidecarForCurrentDocument();
+        // Anchor the undo timeline's "saved" version to the current state
+        // so a subsequent Undo back to here clears the dirty bit.
+        m_undoHistory.MarkSaved();
         m_statusMessage = "Saved.";
         UpdateWindowTitle();
         return true;
@@ -3244,6 +3254,7 @@ void Application::ResolveConfirmYes()
                                       CurrentRtfPage()))
             {
                 WriteSidecarForCurrentDocument();
+                m_undoHistory.MarkSaved();
                 UpdateWindowTitle();
                 m_running = false;
             }
@@ -3307,6 +3318,7 @@ void Application::ResolveConfirmNo()
                                  CurrentRtfPage()))
             {
                 WriteSidecarForCurrentDocument();
+                m_undoHistory.MarkSaved();
                 m_statusMessage = "Saved as plain text (formatting discarded).";
                 UpdateWindowTitle();
             }
@@ -4495,7 +4507,6 @@ void Application::Render()
     uiState.filename      = m_document->DisplayName();
     uiState.dirty         = m_document->IsDirty();
     uiState.statusMessage = m_statusMessage;
-    uiState.currentStyle  = m_currentStyle;
 
     // Modal dialog overlay for prompts and confirmations (replaces the old
     // bottom-of-screen prompt). Active only for text/confirm modes.

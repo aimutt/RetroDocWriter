@@ -133,11 +133,6 @@ struct EditorUiState
     std::string insertImagePaddingText;
     int         insertImageFocusIdx = 0;     // 0=Path, 1=Caption, 2=Padding
 
-    // Current per-character style applied to next-typed input (Format menu /
-    // Ctrl+B/I/U). Reflected in the status-bar B/I/U/S indicators. CharStyle
-    // bitmask: Bold=0x1, Italic=0x2, Underline=0x4, Strikethrough=0x8.
-    uint8_t     currentStyle       = 0;
-
     // WYSIWYG document scrollbar — pixel quantities (the scrollbar
     // primitive's math is unit-agnostic so passing px for totalItems /
     // visibleItems / scrollTop produces a correctly proportioned thumb).

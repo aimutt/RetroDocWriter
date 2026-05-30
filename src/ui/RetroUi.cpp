@@ -319,23 +319,6 @@ void RetroUi::DrawStatusBar(ScreenBuffer& buffer, const Cursor& cursor,
         buffer.WriteText(posX, m_layout.ROW_STATUS, pos,
                          m_theme.dimText, m_theme.background);
 
-    // B I U S indicators for the next-typed style. 8 cells (" B I U S"),
-    // placed just left of the position string with a 2-cell gap.
-    constexpr int kIndicatorWidth = 8;
-    int indicatorX = posX - kIndicatorWidth - 2;
-    if (indicatorX > static_cast<int>(state.statusMessage.size()) + 2)
-    {
-        const char letters[4] = { 'B', 'I', 'U', 'S' };
-        const uint8_t bits[4] = { 0x01, 0x02, 0x04, 0x08 };
-        for (int i = 0; i < 4; ++i)
-        {
-            bool on = (state.currentStyle & bits[i]) != 0;
-            Color fg = on ? m_theme.reverseForeground : m_theme.dimText;
-            Color bg = on ? m_theme.reverseBackground : m_theme.background;
-            buffer.PutChar(indicatorX + i * 2, m_layout.ROW_STATUS,
-                           static_cast<char32_t>(letters[i]), fg, bg);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

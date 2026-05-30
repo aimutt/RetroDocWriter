@@ -30,18 +30,33 @@ RichUndoState RichUndoHistory::Snapshot(const FormattedTextBuffer& buf,
 void RichUndoHistory::PushEdit(const FormattedTextBuffer& buf,
                                int cursorRow, int cursorCol)
 {
+    // Snapshot the LIVE pre-edit state, tagged with the version it
+    // represents (the version currently held in m_currentVersion).
     m_redoStack.clear();
+    m_redoVersionStack.clear();
     m_undoStack.push_back(Snapshot(buf, cursorRow, cursorCol));
+    m_undoVersionStack.push_back(m_currentVersion);
     if (static_cast<int>(m_undoStack.size()) > MAX_DEPTH)
+    {
         m_undoStack.erase(m_undoStack.begin());
+        m_undoVersionStack.erase(m_undoVersionStack.begin());
+    }
+    // Live state moves to a brand-new version on the timeline.
+    m_currentVersion = ++m_versionCounter;
 }
 
 RichUndoState RichUndoHistory::Undo(const FormattedTextBuffer& buf,
                                     int cursorRow, int cursorCol)
 {
+    // Save the live state into the redo stack tagged with its current
+    // version, then pop the undo snapshot and adopt ITS version as the
+    // new live one.
     m_redoStack.push_back(Snapshot(buf, cursorRow, cursorCol));
+    m_redoVersionStack.push_back(m_currentVersion);
     RichUndoState s = std::move(m_undoStack.back());
     m_undoStack.pop_back();
+    m_currentVersion = m_undoVersionStack.back();
+    m_undoVersionStack.pop_back();
     return s;
 }
 
@@ -49,8 +64,11 @@ RichUndoState RichUndoHistory::Redo(const FormattedTextBuffer& buf,
                                     int cursorRow, int cursorCol)
 {
     m_undoStack.push_back(Snapshot(buf, cursorRow, cursorCol));
+    m_undoVersionStack.push_back(m_currentVersion);
     RichUndoState s = std::move(m_redoStack.back());
     m_redoStack.pop_back();
+    m_currentVersion = m_redoVersionStack.back();
+    m_redoVersionStack.pop_back();
     return s;
 }
 
@@ -58,4 +76,9 @@ void RichUndoHistory::ClearAll()
 {
     m_undoStack.clear();
     m_redoStack.clear();
+    m_undoVersionStack.clear();
+    m_redoVersionStack.clear();
+    m_versionCounter = 0;
+    m_currentVersion = 0;
+    m_savedVersion   = 0;
 }
