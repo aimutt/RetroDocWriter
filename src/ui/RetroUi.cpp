@@ -103,6 +103,11 @@ void RetroUi::Draw(ScreenBuffer& buffer, const Cursor& cursor, const EditorUiSta
             DrawFindDialog(buffer, state);
             CheckDialogBoundsRight(buffer, FindDialogRect(buffer.Columns()), "FindDialog");
         }
+        else if (state.openDialogActive)
+        {
+            DrawOpenDialog(buffer, state);
+            CheckDialogBoundsRight(buffer, OpenDialogRect(buffer.Columns()), "OpenDialog");
+        }
         else
         {
             DrawInputDialog(buffer, state.dialogTitle,
@@ -788,6 +793,11 @@ RetroUi::Rect RetroUi::InputDialogRect(int screenColumns) const
 RetroUi::Rect RetroUi::FindDialogRect(int screenColumns) const
 {
     return CenteredRect(screenColumns, m_layout.SCREEN_ROWS, 60, 9);
+}
+
+RetroUi::Rect RetroUi::OpenDialogRect(int screenColumns) const
+{
+    return CenteredRect(screenColumns, m_layout.SCREEN_ROWS, 60, 10);
 }
 
 RetroUi::Rect RetroUi::WordCountDialogRect(int screenColumns) const
@@ -1779,16 +1789,21 @@ void RetroUi::DrawAboutScreen(ScreenBuffer& buffer)
 {
     static const char* aboutLines[] = {
         "",
-        "        RetroDocWriter",
-        "       Version 0.1 - Stage 4",
+        "           RetroDocWriter",
+        "             Version 0.1",
         "",
-        "  A retro-style WYSIWYG document",
-        "  writer inspired by the green CRT",
-        "  terminals of the early 1980s.",
+        "  A WYSIWYG document writer with",
+        "  1980s green-phosphor styling,",
+        "  RTF and plain-text I/O, rich",
+        "  formatting, floating images,",
+        "  multi-column text, and rich",
+        "  headers and footers.",
         "",
         "  Built with C++20 and SDL3.",
         "",
-        "   Press any key to close",
+        "  github.com/aimutt/RetroDocWriter",
+        "",
+        "     Press any key to close",
         "",
     };
 
@@ -2009,6 +2024,124 @@ void RetroUi::DrawFindDialog(ScreenBuffer& buffer, const EditorUiState& state)
     // Hint at the bottom inner row
     const char* hint = "[Enter] Find  [Tab] Switch  [Space] Toggle  [Esc] Cancel";
     buffer.WriteText(x + 2, y + outerHeight - 2, hint, dim, bg);
+}
+
+// ---------------------------------------------------------------------------
+// Open dialog (input field + .rtf/.txt default-extension radio selector)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // Column anchors for the radio chips on the selector row.
+    constexpr int kOpenSelectorLabelCol = 2;
+    constexpr int kOpenSelectorRtfCol   = 22;
+    constexpr int kOpenSelectorTxtCol   = 33;   // .rtf chip is 8 cells; 3-cell gap
+    constexpr int kOpenSelectorChipW    = 8;    // "(X) .rtf" / "(X) .txt"
+    const char* const kOpenHint = "[Tab] Switch  [Space] Toggle  [Enter] OK  [Esc] Cancel";
+}
+
+void RetroUi::DrawOpenDialog(ScreenBuffer& buffer, const EditorUiState& state)
+{
+    Rect r = OpenDialogRect(buffer.Columns());
+    const int x = r.x;
+    const int y = r.y;
+    const int outerWidth  = r.w;
+    const int outerHeight = r.h;
+
+    Color fg     = m_theme.normalText;
+    Color bg     = m_theme.background;
+    Color bright = m_theme.brightText;
+    Color dim    = m_theme.dimText;
+
+    DrawBox(buffer, x, y, outerWidth, outerHeight, fg, bg);
+
+    // Title centred in top border
+    std::string t = " Open File ";
+    int titleX = x + (outerWidth - static_cast<int>(t.size())) / 2;
+    buffer.WriteText(titleX, y, t, bright, bg);
+
+    // Prompt label
+    buffer.WriteText(x + 2, y + 2, "File path:", fg, bg);
+
+    // Bracketed input field (row y+3, cols x+2 .. x+outerWidth-3)
+    const bool inputFocused = (state.openDialogFocus == 0);
+    const int inputX = x + 2;
+    const int inputY = y + 3;
+    const int inputW = outerWidth - 4;
+    const int textW  = inputW - 2;
+    buffer.PutChar(inputX, inputY, U'[', dim, bg);
+    buffer.PutChar(inputX + inputW - 1, inputY, U']', dim, bg);
+
+    int visibleMax = textW - 1;
+    if (visibleMax < 0) visibleMax = 0;
+    std::string display = state.dialogInput;
+    if (static_cast<int>(display.size()) > visibleMax)
+        display = display.substr(display.size() - visibleMax);
+    for (int i = 0; i < static_cast<int>(display.size()); ++i)
+        buffer.PutChar(inputX + 1 + i, inputY,
+                       static_cast<char32_t>(static_cast<unsigned char>(display[i])),
+                       bright, bg);
+
+    int cursorCol = inputX + 1 + static_cast<int>(display.size());
+    if (inputFocused
+        && state.dialogCursorVisible
+        && cursorCol >= inputX + 1
+        && cursorCol <= inputX + inputW - 2)
+    {
+        buffer.At(cursorCol, inputY).reverseVideo = true;
+    }
+
+    // Selector row (radio chips for .rtf / .txt default-extension)
+    const int selY        = y + 5;
+    const bool selFocused = (state.openDialogFocus == 1);
+    const Color selFg     = selFocused ? m_theme.reverseForeground : fg;
+    const Color selBg     = selFocused ? m_theme.reverseBackground : bg;
+    // Paint the highlight span across the full selector row (cols 2 .. just
+    // past the rightmost chip) so focus is unambiguous.
+    const int highlightEnd = kOpenSelectorTxtCol + kOpenSelectorChipW;
+    for (int c = kOpenSelectorLabelCol; c < highlightEnd; ++c)
+        buffer.PutChar(x + c, selY, U' ', selFg, selBg);
+    buffer.WriteText(x + kOpenSelectorLabelCol, selY,
+                     "Default extension:", selFg, selBg);
+    const char* rtfChip = state.openDefaultExtIsTxt ? "( ) .rtf" : "(*) .rtf";
+    const char* txtChip = state.openDefaultExtIsTxt ? "(*) .txt" : "( ) .txt";
+    buffer.WriteText(x + kOpenSelectorRtfCol, selY, rtfChip, selFg, selBg);
+    buffer.WriteText(x + kOpenSelectorTxtCol, selY, txtChip, selFg, selBg);
+
+    // Hint at the bottom inner row
+    buffer.WriteText(x + 2, y + outerHeight - 2, kOpenHint, dim, bg);
+}
+
+RetroUi::OpenHit RetroUi::HitTestOpenDialog(int cellCol, int cellRow,
+                                             int screenColumns) const
+{
+    Rect r = OpenDialogRect(screenColumns);
+    if (!r.Contains(cellCol, cellRow)) return OpenHit::None;
+
+    if (cellRow == r.y + 3)
+    {
+        const int inputX = r.x + 2;
+        const int inputW = r.w - 4;
+        if (cellCol >= inputX && cellCol < inputX + inputW)
+            return OpenHit::InputField;
+    }
+    if (cellRow == r.y + 5)
+    {
+        // Each chip is kOpenSelectorChipW cells wide starting at its anchor.
+        auto inChip = [&](int chipCol) {
+            return cellCol >= r.x + chipCol
+                && cellCol <  r.x + chipCol + kOpenSelectorChipW;
+        };
+        if (inChip(kOpenSelectorRtfCol)) return OpenHit::ExtRtf;
+        if (inChip(kOpenSelectorTxtCol)) return OpenHit::ExtTxt;
+    }
+    if (cellRow == r.y + r.h - 2)
+    {
+        std::string token = TokenAt(kOpenHint, r.x + 2, cellCol);
+        if (token == "ENTER") return OpenHit::OkHint;
+        if (token == "ESC")   return OpenHit::CancelHint;
+    }
+    return OpenHit::None;
 }
 
 // ---------------------------------------------------------------------------
