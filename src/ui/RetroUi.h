@@ -81,6 +81,11 @@ struct EditorUiState
     bool findDialogCaseInsensitive = false;
     int  findDialogFocus           = 0;   // 0 = input field, 1 = checkbox
 
+    // Open dialog (input field + .rtf/.txt default-extension radio)
+    bool openDialogActive          = false;
+    int  openDialogFocus           = 0;   // 0 = input field, 1 = selector
+    bool openDefaultExtIsTxt       = false;
+
     // Word count
     int  wordCount             = 0;
     bool showWordCount         = false;
@@ -174,6 +179,7 @@ public:
 
     Rect InputDialogRect    (int screenColumns) const;
     Rect FindDialogRect     (int screenColumns) const;
+    Rect OpenDialogRect     (int screenColumns) const;
     Rect WordCountDialogRect(int screenColumns) const;
     Rect ConfirmDialogRect  (int screenColumns) const;
     Rect FontDialogRect     (int screenColumns) const;
@@ -185,6 +191,9 @@ public:
 
     enum class FindHit { None, InputField, Checkbox, OkHint, CancelHint };
     FindHit HitTestFindDialog(int cellCol, int cellRow, int screenColumns) const;
+
+    enum class OpenHit { None, InputField, ExtRtf, ExtTxt, OkHint, CancelHint };
+    OpenHit HitTestOpenDialog(int cellCol, int cellRow, int screenColumns) const;
 
     enum class WordCountHit { None, Checkbox, CloseHint };
     WordCountHit HitTestWordCountDialog(int cellCol, int cellRow, int screenColumns) const;
@@ -309,6 +318,7 @@ private:
     void DrawThemeDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawColorDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawFindDialog(ScreenBuffer& buffer, const EditorUiState& state);
+    void DrawOpenDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawWordCountDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawPrintDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawMarginsDialog(ScreenBuffer& buffer, const EditorUiState& state);

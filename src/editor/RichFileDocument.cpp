@@ -20,12 +20,18 @@ bool RichFileDocument::IsRtfPath(const std::string& path)
 
 std::string RichFileDocument::WithDefaultExtension(const std::string& path)
 {
+    return WithDefaultExtension(path, ".rtf");
+}
+
+std::string RichFileDocument::WithDefaultExtension(const std::string& path,
+                                                    const std::string& defaultExt)
+{
     if (path.empty()) return path;
     auto   slash     = path.find_last_of("/\\");
     size_t baseStart = (slash == std::string::npos) ? 0 : slash + 1;
-    // No '.' in the final path component → no extension → default to .rtf.
+    // No '.' in the final path component → no extension → apply the default.
     if (path.find('.', baseStart) == std::string::npos)
-        return path + ".rtf";
+        return path + defaultExt;
     return path;
 }
 

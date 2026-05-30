@@ -313,6 +313,9 @@ private:
     int        m_findFromCol         = 0;
     bool       m_findCaseInsensitive = false; // persisted for the session
     int        m_findDialogFocus     = 0;     // 0 = input field, 1 = checkbox
+    // Open dialog session-sticky state.
+    int        m_openDialogFocus     = 0;     // 0 = input field, 1 = ext selector
+    bool       m_openDefaultExtIsTxt = false; // false = .rtf default, true = .txt
     bool       m_lastActionWasInsert = false;
     bool       m_exitAfterSave       = false; // chain SaveAs dialog into program exit
     bool       m_swallowNextTextInput = false;// drop the TEXT_INPUT that follows a confirm Y/N

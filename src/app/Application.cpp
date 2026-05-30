@@ -152,6 +152,12 @@ void Application::OpenFile(const std::string& path)
         m_selection.Clear();
         m_undoHistory.ClearAll();
         m_undoHistory.MarkSaved();          // loaded buffer == on-disk state
+        // Plain-text files frequently contain very long lines (logs, single-
+        // paragraph notes, etc.); default word wrap to ON so they render
+        // readably. The per-document settings load that follows will override
+        // this if the user has a persisted preference for THIS file.
+        if (!RichFileDocument::IsRtfPath(path))
+            SetWordWrap(true);
         LoadSidecarForCurrentDocument();
 
         // RTF loads carry document font + size in their header. Apply them
@@ -816,7 +822,8 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
         if (isTextInput)
         {
             const bool focusOnInput =
-                (m_promptMode != PromptMode::Find) || (m_findDialogFocus == 0);
+                ((m_promptMode != PromptMode::Find) || (m_findDialogFocus == 0))
+             && ((m_promptMode != PromptMode::Open) || (m_openDialogFocus == 0));
             if (focusOnInput && SDL_HasClipboardText())
             {
                 char* raw = SDL_GetClipboardText();
@@ -889,6 +896,47 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
                 break;
         }
         return;
+    }
+
+    // Open dialog: input field + .rtf/.txt default-extension selector. Tab
+    // / Up / Down cycle focus; Space (and Left/Right on the selector) toggle
+    // the chosen default.
+    if (m_promptMode == PromptMode::Open)
+    {
+        switch (key.scancode)
+        {
+            case SDL_SCANCODE_TAB:
+            case SDL_SCANCODE_UP:
+            case SDL_SCANCODE_DOWN:
+                m_openDialogFocus = 1 - m_openDialogFocus;
+                return;
+            case SDL_SCANCODE_SPACE:
+                if (m_openDialogFocus == 1)
+                {
+                    m_openDefaultExtIsTxt = !m_openDefaultExtIsTxt;
+                    m_swallowNextTextInput = true; // drop the literal space
+                    return;
+                }
+                break;   // input field: fall through to text-input path
+            case SDL_SCANCODE_LEFT:
+                if (m_openDialogFocus == 1) { m_openDefaultExtIsTxt = false; return; }
+                break;
+            case SDL_SCANCODE_RIGHT:
+                if (m_openDialogFocus == 1) { m_openDefaultExtIsTxt = true;  return; }
+                break;
+            case SDL_SCANCODE_BACKSPACE:
+                if (m_openDialogFocus == 0 && !m_promptText.empty())
+                    m_promptText.pop_back();
+                return;
+            case SDL_SCANCODE_RETURN:
+                CommitPrompt();
+                return;
+            case SDL_SCANCODE_ESCAPE:
+                CancelPrompt();
+                return;
+            default:
+                return;
+        }
     }
 
     // Find dialog has an extra checkbox control reachable via Tab.
@@ -1311,6 +1359,47 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
         {
             m_promptMode  = PromptMode::None;
             m_needsRedraw = true;
+        }
+        return true;
+    }
+
+    // Open dialog (input field + .rtf/.txt default-extension selector)
+    if (m_promptMode == PromptMode::Open)
+    {
+        auto rect = m_ui->OpenDialogRect(m_screenColumns);
+        if (!rect.Contains(cellCol, cellRow))
+        {
+            CancelPrompt();
+            m_needsRedraw = true;
+            return true;
+        }
+        auto hit = m_ui->HitTestOpenDialog(cellCol, cellRow, m_screenColumns);
+        switch (hit)
+        {
+            case RetroUi::OpenHit::InputField:
+                m_openDialogFocus = 0;
+                m_needsRedraw     = true;
+                break;
+            case RetroUi::OpenHit::ExtRtf:
+                m_openDialogFocus     = 1;
+                m_openDefaultExtIsTxt = false;
+                m_needsRedraw         = true;
+                break;
+            case RetroUi::OpenHit::ExtTxt:
+                m_openDialogFocus     = 1;
+                m_openDefaultExtIsTxt = true;
+                m_needsRedraw         = true;
+                break;
+            case RetroUi::OpenHit::OkHint:
+                CommitPrompt();
+                m_needsRedraw = true;
+                break;
+            case RetroUi::OpenHit::CancelHint:
+                CancelPrompt();
+                m_needsRedraw = true;
+                break;
+            default:
+                break;
         }
         return true;
     }
@@ -2009,12 +2098,15 @@ void Application::HandleTextInput(const char* text)
 
     if (m_promptMode != PromptMode::None)
     {
-        if (m_promptMode == PromptMode::Open            ||
-            m_promptMode == PromptMode::SaveAs          ||
+        if (m_promptMode == PromptMode::SaveAs          ||
             m_promptMode == PromptMode::CaptionDialog   ||
             m_promptMode == PromptMode::AddWordDialog   ||
             m_promptMode == PromptMode::RemoveWordDialog||
             m_promptMode == PromptMode::CheckWordDialog)
+        {
+            m_promptText += text;
+        }
+        else if (m_promptMode == PromptMode::Open && m_openDialogFocus == 0)
         {
             m_promptText += text;
         }
@@ -2561,6 +2653,7 @@ void Application::StartOpenPrompt()
 {
     m_promptMode = PromptMode::Open;
     m_promptText.clear();
+    m_openDialogFocus = 0;   // start on input; ext-selector value is sticky
     m_statusMessage.clear();
 }
 
@@ -2579,20 +2672,38 @@ void Application::CommitPrompt()
     if (mode == PromptMode::Open)
     {
         if (!m_promptText.empty())
-            OpenFile(RichFileDocument::WithDefaultExtension(m_promptText));
+        {
+            const std::string defaultExt =
+                m_openDefaultExtIsTxt ? ".txt" : ".rtf";
+            OpenFile(RichFileDocument::WithDefaultExtension(m_promptText,
+                                                            defaultExt));
+        }
     }
     else if (mode == PromptMode::SaveAs)
     {
         if (!m_promptText.empty())
         {
             std::string path = RichFileDocument::WithDefaultExtension(m_promptText);
+            // Explicit Save As to a .txt destination with formatting present:
+            // flatten in memory so the in-editor view matches what's about to
+            // hit disk. Mirrors the Ctrl+S -> ConfirmSaveAsRtf -> N path.
+            bool flattened = false;
+            if (!RichFileDocument::IsRtfPath(path)
+                && m_document->Buffer().HasAnyFormatting())
+            {
+                m_document->Buffer().FlattenAllStyles();
+                flattened = true;
+            }
             if (m_document->SaveAs(path,
                                    m_documentFontSettings.face,
                                    FontSizePoints(m_documentFontSettings.size),
                                    CurrentRtfPage()))
             {
                 WriteSidecarForCurrentDocument();
-                m_statusMessage = "Saved.";
+                m_undoHistory.MarkSaved();
+                m_statusMessage = flattened
+                    ? "Saved as plain text (formatting discarded)."
+                    : "Saved.";
                 UpdateWindowTitle();
                 if (m_exitAfterSave)
                 {
@@ -4670,6 +4781,9 @@ void Application::Render()
     uiState.findDialogActive          = (m_promptMode == PromptMode::Find);
     uiState.findDialogCaseInsensitive = m_findCaseInsensitive;
     uiState.findDialogFocus           = m_findDialogFocus;
+    uiState.openDialogActive          = (m_promptMode == PromptMode::Open);
+    uiState.openDialogFocus           = m_openDialogFocus;
+    uiState.openDefaultExtIsTxt       = m_openDefaultExtIsTxt;
 
     // Word count: only compute when the status bar or modal needs it.
     uiState.showWordCount         = m_showWordCount;

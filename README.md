@@ -2,6 +2,10 @@
 
 A C++20 WYSIWYG document writer styled after the green-phosphor monochrome terminals of the early 1980s — modern dependencies, retro look. RetroDocWriter draws its own text-mode chrome (menu bar, status bar, dialogs, function-key bar) inside an SDL window, then paints a centered US-Letter page over the editor area at the document font's true point size, with proportional text, per-character formatting (bold / italic / underline / strikethrough, face, size, color, highlight), per-paragraph alignment, per-document margins, multi-page navigation via Ctrl+Enter forced page breaks, floating shapes and images with text wrap, multi-column text, rich header/footer bands, RTF load/save, GDI printing, and spell check.
 
+![RetroDocWriter screenshot](assets/screenshots/RetroDocWriterScreenshot.png)
+
+**Repository:** [github.com/aimutt/RetroDocWriter](https://github.com/aimutt/RetroDocWriter)
+
 Primary target is **Windows x64**. The architecture is portable; Linux and macOS builds are planned but not yet validated.
 
 ## Features
@@ -18,7 +22,7 @@ Primary target is **Windows x64**. The architecture is portable; Linux and macOS
 - Floating shapes and images (Word-97 `\shp`) with optional captions, isotropic text-standoff padding, and full text-wrap. Inserted via Insert > Image… (path + caption + padding in one dialog) or Insert > Shape…; selected/moved/resized with the mouse (corner handles); caption editable after the fact via Insert > Caption…
 - Multi-page documents with Ctrl+Enter forced page breaks
 - Vertical scrollbar with arrow buttons and thumb drag; cursor follows the scroll
-- RTF load/save (Save As… `.rtf`; Ctrl+S on a `.txt` with formatting prompts to upgrade). Per-character formatting, alignment, page breaks, floating shapes/images, captions, padding, and columns all round-trip.
+- RTF load/save and plain `.txt` load/save. Opening a `.txt` auto-enables word wrap (overridden if the file has a persisted per-document preference); saving to `.txt` writes raw text only — explicit Save As → `.txt` silently flattens formatting in memory to match what hits disk, and Ctrl+S on a `.txt` that has unsaved formatting prompts to upgrade to `.rtf` or strip. Per-character formatting, alignment, page breaks, floating shapes/images, captions, padding, and columns all round-trip through `.rtf`.
 - Print to any installed Windows printer with paper-size / orientation / margin / range / copies controls. Printed pages match the on-screen WYSIWYG layout exactly (same line breaks, pagination, float positions, header/footer placement).
 - Spell check with built-in 370k-word dictionary, optional misspell highlighting, per-user add/remove
 - Theme picker (green phosphor / white office)

@@ -54,11 +54,14 @@ public:
     // that need to branch on file type (e.g. the Save dispatch).
     static bool IsRtfPath(const std::string& path);
 
-    // If the final path component has no extension, append ".rtf"; otherwise
-    // return `path` unchanged. The RTF-first default for the Open/Save-As
-    // prompts so the user can omit the extension. (Rule: "no '.' in the
-    // basename" = no extension.)
+    // If the final path component has no extension, append `defaultExt`;
+    // otherwise return `path` unchanged. The single-arg overload uses ".rtf"
+    // — the historical default and what Save As still uses; Open passes the
+    // user's chosen default-extension selector value through the two-arg
+    // form. (Rule: "no '.' in the basename" = no extension.)
     static std::string WithDefaultExtension(const std::string& path);
+    static std::string WithDefaultExtension(const std::string& path,
+                                            const std::string& defaultExt);
 
 private:
     bool LoadPlain(const std::string& path);
