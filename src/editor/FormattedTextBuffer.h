@@ -98,8 +98,8 @@ public:
 
     // Mutating ops mirror TextBuffer ---------------------------------------
     // Newly inserted characters use the given CharFormat. For typed input
-    // the caller passes {m_currentStyle, Inherit, Inherit}; for paste of
-    // unstyled text, all three default to Inherit/0.
+    // the caller passes Application::EffectiveTypingFormat() (the format of
+    // the character adjacent to the caret, or a pending no-selection pick).
     void InsertChar(int col, int row, char ch, CharFormat fmt);
     void Backspace(int col, int row);
     void DeleteForward(int col, int row);

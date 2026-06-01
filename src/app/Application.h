@@ -230,12 +230,22 @@ private:
     // Per-character formatting (Format menu / Ctrl+B / Ctrl+I / Ctrl+U).
     // With a non-empty selection the bit is XOR-toggled across the range
     // (smart toggle — clear if all selected chars have it, else set). With
-    // no selection the bit toggles in m_currentStyle for next-typed input.
+    // no selection the bit toggles in a pending caret override for
+    // next-typed input (see EffectiveTypingFormat / SetPendingFormat).
     void ToggleBold();
     void ToggleItalic();
     void ToggleUnderline();
     void ToggleStrikethrough();
     void ApplyStyleAction(uint8_t bit);
+
+    // The CharFormat a character typed/inserted at the caret should carry.
+    // A no-selection Font/Color/Highlight/style pick is honored once (pinned
+    // to the caret cell); otherwise the format of the adjacent character is
+    // inherited so a run continues whatever surrounds it.
+    CharFormat EffectiveTypingFormat() const;
+    // Pin `f` as the one-shot override for the next character typed at the
+    // current caret cell.
+    void SetPendingFormat(const CharFormat& f);
 
     // Per-paragraph alignment (Format menu / Ctrl+L/E/R/J). Applies to every
     // paragraph touched by the selection, or the cursor's paragraph when
@@ -371,25 +381,19 @@ private:
     int        m_scrollbarDragVisibleItems = 0;
     int        m_scrollbarDragGrabOffset   = 0;
 
-    // Per-character text color (Format > Text Color...). m_currentColor
-    // applies to next-typed input when no selection is active.
-    uint8_t      m_currentColor          = CharFormat::Inherit;
     int          m_colorDialogFocusIdx   = 0;
 
-    // Per-character background highlight (Format > Highlight Color...).
-    // Same UX as text color but writes a different CharFormat field.
-    uint8_t      m_currentHighlight      = CharFormat::Inherit;
-
-    // Per-character face/size for next-typed input when the Font dialog is
-    // committed without a selection (mirrors m_currentColor's pattern).
-    // Inherit means "follow the document default" (m_documentFontSettings) —
-    // is the initial state. Picking a face/size in the dialog without a
-    // selection sets these; existing text (which carries Inherit-face/size
-    // by default) is unchanged. To restyle existing text the user must
-    // Select All first, then pick a face/size — the dialog pins the
-    // selected range via SetFaceInRange / SetSizeInRange.
-    uint8_t      m_currentFace           = CharFormat::Inherit;
-    uint8_t      m_currentSize           = CharFormat::Inherit;
+    // Format for newly typed/inserted text. Normally the editor inherits the
+    // format of the character adjacent to the caret (see EffectiveTypingFormat),
+    // so a new run continues whatever surrounds it. A Font/Color/Highlight/style
+    // pick made with NO selection sets a one-shot "pending" override pinned to
+    // the caret cell: it applies to the first character typed there, after which
+    // neighbor inheritance carries the run forward. The pin self-clears once the
+    // caret moves away (position no longer matches) or after it is consumed.
+    CharFormat   m_pendingFormat;
+    bool         m_pendingFormatActive   = false;
+    int          m_pendingFormatRow      = -1;
+    int          m_pendingFormatCol      = -1;
 
     // Cached window pixel dimensions and screen-buffer dimensions —
     // recomputed when the window is resized or the font changes.
@@ -478,9 +482,4 @@ private:
     Selection                       m_selection;
     RichUndoHistory                 m_undoHistory;
 
-    // Per-character style applied to next-typed input when no selection is
-    // active. Toggled by Ctrl+B / Ctrl+I / Ctrl+U and the Format menu items
-    // (Step 5 wires the UI). Stored here so Render() can surface a status-bar
-    // indicator showing the active style.
-    uint8_t                         m_currentStyle = 0;
 };

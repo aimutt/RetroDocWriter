@@ -36,10 +36,12 @@ enum class ParagraphAlign : uint8_t
 //
 // `face` and `size` are FontFace / FontSize enum indices, with the
 // sentinel value `Inherit` (0xFF) meaning "use the document default
-// (Application::m_fontSettings)". Newly-typed characters get the sentinel
-// so they automatically follow whatever face/size the user picks via the
-// Font dialog without a selection. Selection-targeted Font dialog applies
-// real index values that pin the run to a specific face/size.
+// (Application::m_documentFontSettings)", resolved at render time. A run
+// pinned to a real index keeps it. Newly typed characters inherit the
+// CharFormat of the caret's neighbor (Application::EffectiveTypingFormat),
+// so a run continues whatever surrounds it; a no-selection Font dialog pick
+// applies once at the caret, and a selection-targeted pick assigns real
+// index values across the range.
 struct CharFormat
 {
     static constexpr uint8_t Inherit = 0xFF;

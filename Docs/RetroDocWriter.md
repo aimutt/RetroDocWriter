@@ -9,7 +9,7 @@ RetroEdit is a plain-text editor — one buffer of `std::string` lines, no per-c
 - **RetroEdit** — pure plain-text editor. Always character-cell rendering. No pages, no margins, no formatting.
 - **RetroDocWriter** — always-on WYSIWYG document writer. Proportional layout on a US Letter page, per-character bold/italic/underline/strikethrough, native RTF I/O.
 
-## Current state (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 shipped)
+## Current state (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 shipped)
 
 **Phase 1 — layout-only WYSIWYG:**
 
@@ -33,7 +33,7 @@ RetroEdit is a plain-text editor — one buffer of `std::string` lines, no per-c
 **Phase 3 — per-run font face/size + style-aware print:**
 
 - The data model graduated from style-only bytes to a full `CharFormat` struct (style + face + size) per character; the parallel format vector still mirrors `TextBuffer` byte-for-byte.
-- **Font dialog** (Options > Font…): when a selection is active, applying a face/size pins those characters to the new override; otherwise the choice changes the document default (the existing behavior). Opening the dialog with a selection seeds the face/size from the first character of the selection.
+- **Font dialog** (Options > Font…): when a selection is active, applying a face/size pins those characters to the new override; with no selection the choice becomes a one-shot next-typed override at the caret (see Phase 7 — it is *not* the document default). Opening the dialog seeds the face/size from the selection's first character, or otherwise from the effective format at the caret.
 - **WysiwygRenderer** holds a small `(face, pointSize)` → `GlyphCache` map so multiple sizes / faces coexist in the same document. Wrap is now **pixel-based** rather than column-based: a heading at 24pt won't overflow the right margin just because the default font is 16pt. Each visual line's height is `max(LineHeight)` over the fonts actually used on it; pagination is greedy packing of variable-height lines.
 - **RTF round-trip preserves face + size runs.** The writer builds `\fonttbl` from every distinct face used in the document and emits `\fN` / `\fsN` differentially in the body. The reader parses multi-entry `\fonttbl`, maps each entry to a `FontFace` via `FontFaceFromFamilyName`, and applies per-run `\fN` / `\fsN` while walking the body. Inherit-sentinel chars (the doc default) are folded back when the body's `\fN` / `\fsN` value matches the header's `\deff` / `\fs`, so files that don't mix fonts round-trip without spurious explicit overrides.
 - **Style-aware print path.** `Print.cpp` gained a formatted code path triggered when `PrintRequest::formats` is set. It iterates per-character with a `(face, pointSize, styleBits)` → `HFONT` cache, registers every used TTF privately via `AddFontResourceEx`, and switches GDI fonts per run inside each visual line. Wrap and pagination mirror the screen renderer (pixel-based, variable line height) so printed output matches what's on screen.
@@ -42,7 +42,7 @@ RetroEdit is a plain-text editor — one buffer of `std::string` lines, no per-c
 
 - **Theme picker** (both products, `Options > Theme...`). Two presets: Green (the existing retro look, byte-for-byte) and White (near-white background / near-black text for users who don't want green-on-black). Choice persists in `%LOCALAPPDATA%\RetroEdit\config.ini` under the `theme_name` key and applies before the first frame on every launch. Theme is now factory-built (`core/render/Theme.h` → `MakeTheme(ThemeName)`); both products use the same registry so future themes cost one entry.
 - **Per-character text color** (RetroDocWriter only). `CharFormat` gains a `color` byte holding an index into a fixed 16-color CGA/RTF palette (black, dark red, …, white). `Inherit` (0xFF) means "follow the active theme's normal-text color", so switching themes recolors unstyled text but leaves explicitly-colored runs alone.
-- **Format > Text Color...** opens a 4×4 swatch picker. With a selection active → pins the color to the range via `SetColorInRange`; without selection → updates `m_currentColor` so next-typed input picks it up. Mirror of how Font dialog and Bold/Italic/Underline behave.
+- **Format > Text Color...** opens a 4×4 swatch picker. With a selection active → pins the color to the range via `SetColorInRange`; without selection → sets a one-shot next-typed override at the caret (see Phase 7). Mirror of how Font dialog and Bold/Italic/Underline behave.
 - **RTF round-trip.** The writer always emits a 16-entry `\colortbl` (plus the leading "auto" semicolon), then differential `\cfN` per character run. The reader parses third-party color tables by mapping each `\red\green\blue` triple to the nearest palette index via `Palette::NearestIndex`, so a Word document with arbitrary RGB colors loads with a sensible approximation.
 - **Style-aware print path** now also honors color: each `(font, color)` group calls `SetTextColor` before its `TextOutA`. Inherit chars print as `RGB(0,0,0)` regardless of screen theme — paper is white.
 
@@ -59,7 +59,13 @@ RetroEdit is a plain-text editor — one buffer of `std::string` lines, no per-c
 - **Removal of the WYSIWYG toggle.** Before the product split, RetroDocWriter inherited a per-document `m_wysiwygEnabled` flag from RetroEdit that could turn the proportional view off and fall back to the cell grid. With RetroDocWriter now being **the WYSIWYG product**, that toggle is dead weight — Phase 6 removed the field, the `ToggleWysiwyg` method, the cell-grid cursor branch, the sidecar `wysiwyg` key (still parsed silently on load for backward compat, no longer written), and the conditional in `Render` / `NavigationWrapWidth` / `MoveCursorUp` / `MoveCursorDown` / `ClosePrintDialog`. The non-formatted (`formats == nullptr`) print path stays in `Print.cpp` solely for RetroEdit's monospace use.
 - **Print path per-glyph wrap (already there since Phase 3).** The formatted print path uses `GetCharWidth32A` per glyph and wraps in pixels — proportional fonts print at the same wrap points as the screen with no further changes. The legacy `overrideCharsPerLine` field on `PrintRequest` (a bridge from when on-screen used per-glyph and print used `usableWidth / 'M'.cx`) is gone — both paths now derive their own wrap natively.
 
-**Explicitly not yet shipped (Phase 7+):**
+**Phase 7 — caret-inherited typing format + status-bar font label:**
+
+- **Newly typed text inherits the caret's neighbor, not a sticky "current format".** Earlier phases stamped each typed/inserted character from persistent `m_currentStyle/Face/Size/Color/Highlight` fields, so changing a heading's size via the Font dialog left those fields "stuck" at the new size and the next characters typed *anywhere* came out at the heading size. Those five fields are gone. Every insert site (typed char, Tab, paste) now stamps `Application::EffectiveTypingFormat()`: a no-selection Font/Color/Highlight/style pick pinned to the exact caret cell wins once; otherwise the format of the character immediately left of the caret is inherited (then the line's first char, then the document default). Because the first char of a run carries the chosen format, the rest inherits from it and the pin self-clears when the caret moves — so typing after a 12 pt line stays 12 pt, while a deliberate no-selection size pick still lets you start a larger run.
+- **No-selection picks set a pending override** via `SetPendingFormat()` (seeded from the neighbor so a size pick doesn't drop bold/color); a pick *with* a selection only restyles the range and leaves no sticky state. The Font/Color/Highlight dialog seeds, the Font dialog's `*` active-preset marker, and the caret render size (`ctx.insertFace`/`insertPointSize`) all read `EffectiveTypingFormat()`.
+- **Status-bar font label.** The status bar shows the effective face + point size for the next typed character (e.g. `EB Garamond 12 pt`), centered, drawn only when it fits clear of the left status message and the right `Ln/Col` block.
+
+**Explicitly not yet shipped (Phase 8+):**
 
 - Line justification (distributing inter-word whitespace to flush both edges)
 - Hanging punctuation / optical margin adjustment
