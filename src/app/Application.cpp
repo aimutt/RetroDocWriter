@@ -593,8 +593,9 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
             int endRow = 0, endCol = 0;
             m_document->Buffer().InsertText(m_cursor.column, m_cursor.row,
                                             "    ",
-                                            CharFormat{m_currentStyle, m_currentFace, m_currentSize, m_currentColor, m_currentHighlight},
+                                            EffectiveTypingFormat(),
                                             endRow, endCol);
+            m_pendingFormatActive = false;
             m_cursor.row    = endRow;
             m_cursor.column = endCol;
             m_document->MarkDirty();
@@ -2155,7 +2156,8 @@ void Application::HandleTextInput(const char* text)
             }
             EnsureUndoBeforeInsert();
             m_document->Buffer().InsertChar(m_cursor.column, m_cursor.row, *p,
-                                            CharFormat{m_currentStyle, m_currentFace, m_currentSize, m_currentColor, m_currentHighlight});
+                                            EffectiveTypingFormat());
+            m_pendingFormatActive = false;
             ++m_cursor.column;
             m_document->MarkDirty();
             UpdateWindowTitle();
@@ -2565,8 +2567,9 @@ void Application::PasteClipboard()
 
     int endRow = 0, endCol = 0;
     m_document->Buffer().InsertText(m_cursor.column, m_cursor.row, text,
-                                    CharFormat{m_currentStyle, m_currentFace, m_currentSize, m_currentColor, m_currentHighlight},
+                                    EffectiveTypingFormat(),
                                     endRow, endCol);
+    m_pendingFormatActive = false;
     m_cursor.row    = endRow;
     m_cursor.column = endCol;
     m_selection.Clear();
@@ -3143,16 +3146,17 @@ void Application::OpenFontDialog()
     // Seed precedence:
     //   1. First char of the active selection (so reopening the dialog
     //      after pinning a face/size reflects what's actually selected).
-    //   2. m_currentFace / m_currentSize (the next-typed face/size set
-    //      by a previous no-selection dialog commit).
+    //   2. The effective next-typed face/size at the caret (a pending pick
+    //      or the inherited neighbor format).
     //   3. Document default (m_documentFontSettings) when neither is set.
     FontFace seedFace = m_documentFontSettings.face;
     FontSize seedSize = m_documentFontSettings.size;
-    if (m_currentFace != CharFormat::Inherit
-        && m_currentFace < static_cast<uint8_t>(FontFace::Count_))
-        seedFace = static_cast<FontFace>(m_currentFace);
-    if (m_currentSize != CharFormat::Inherit && m_currentSize < 4)
-        seedSize = FontSizeAt(static_cast<int>(m_currentSize));
+    CharFormat tf = EffectiveTypingFormat();
+    if (tf.face != CharFormat::Inherit
+        && tf.face < static_cast<uint8_t>(FontFace::Count_))
+        seedFace = static_cast<FontFace>(tf.face);
+    if (tf.size != CharFormat::Inherit && tf.size < 4)
+        seedSize = FontSizeAt(static_cast<int>(tf.size));
     if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
     {
         int sr, sc, er, ec;
@@ -3179,12 +3183,6 @@ void Application::ApplyFontDialogSelection()
     FontFace face = static_cast<FontFace>(m_fontDialogPresetIdx / FontSizeCount());
     FontSize size = FontSizeAt(m_fontDialogPresetIdx % FontSizeCount());
     m_promptMode = PromptMode::None;
-
-    // Always update next-typed face/size so subsequent typing matches what
-    // the user just picked — even after pinning the same value to a
-    // selection.
-    m_currentFace = static_cast<uint8_t>(face);
-    m_currentSize = static_cast<uint8_t>(IndexOfFontSize(size));
 
     if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
     {
@@ -3217,12 +3215,17 @@ void Application::ApplyFontDialogSelection()
         return;
     }
 
-    // No selection — the picked face/size affects only next-typed input
-    // (via the m_currentFace / m_currentSize fields set above). The
+    // No selection — the picked face/size affects only next-typed input, via
+    // a one-shot pending override pinned to the caret (seeded from the
+    // neighbor so the pick doesn't drop the surrounding style/color). The
     // document default (m_documentFontSettings) is left untouched so existing
     // Inherit-face/size characters are not retroactively restyled. To
     // restyle every character in the document, the user can press
     // Ctrl+A (Select All) before opening the Font dialog.
+    CharFormat f = EffectiveTypingFormat();
+    f.face = static_cast<uint8_t>(face);
+    f.size = static_cast<uint8_t>(IndexOfFontSize(size));
+    SetPendingFormat(f);
     m_statusMessage = std::string("Font (next-typed): ") + FontFaceName(face);
 }
 
@@ -3251,9 +3254,9 @@ void Application::OpenColorDialog()
 {
     m_promptMode = PromptMode::ColorDialog;
     // Seed the dialog from the first char of the selection if active, else
-    // from m_currentColor. Inherit means "no override" — show the cursor at
-    // the first swatch (Black) as a sensible default focus.
-    uint8_t seed = m_currentColor;
+    // from the effective next-typed color at the caret. Inherit means "no
+    // override" — show the cursor at the first swatch (Black) as a default.
+    uint8_t seed = EffectiveTypingFormat().color;
     if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
     {
         int sr, sc, er, ec;
@@ -3283,14 +3286,16 @@ void Application::ApplyColorDialogSelection()
         return;
     }
 
-    m_currentColor = static_cast<uint8_t>(idx);
+    CharFormat f = EffectiveTypingFormat();
+    f.color = static_cast<uint8_t>(idx);
+    SetPendingFormat(f);
     m_statusMessage = std::string("Color (next-typed): ") + Palette::NameAt(static_cast<uint8_t>(idx));
 }
 
 void Application::OpenHighlightDialog()
 {
     m_promptMode = PromptMode::HighlightDialog;
-    uint8_t seed = m_currentHighlight;
+    uint8_t seed = EffectiveTypingFormat().highlight;
     if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
     {
         int sr, sc, er, ec;
@@ -3320,7 +3325,9 @@ void Application::ApplyHighlightDialogSelection()
         return;
     }
 
-    m_currentHighlight = static_cast<uint8_t>(idx);
+    CharFormat f = EffectiveTypingFormat();
+    f.highlight = static_cast<uint8_t>(idx);
+    SetPendingFormat(f);
     m_statusMessage = std::string("Highlight (next-typed): ") + Palette::NameAt(static_cast<uint8_t>(idx));
 }
 
@@ -3987,6 +3994,34 @@ void Application::PrintBackspace()
 // Per-character formatting (Format menu / Ctrl+B / Ctrl+I / Ctrl+U)
 // ---------------------------------------------------------------------------
 
+CharFormat Application::EffectiveTypingFormat() const
+{
+    // 1. An explicit no-selection pick, pinned to this exact caret cell, wins.
+    if (m_pendingFormatActive
+        && m_cursor.row == m_pendingFormatRow
+        && m_cursor.column == m_pendingFormatCol)
+        return m_pendingFormat;
+    if (m_document)
+    {
+        // 2. Inherit the character immediately to the left.
+        if (m_cursor.column > 0)
+            return m_document->Buffer().FormatAt(m_cursor.row, m_cursor.column - 1);
+        // 3. Start of a non-empty line: inherit the first character.
+        if (m_document->Buffer().LineLength(m_cursor.row) > 0)
+            return m_document->Buffer().FormatAt(m_cursor.row, 0);
+    }
+    // 4. Empty line / no document: document default (all-Inherit, style 0).
+    return CharFormat{};
+}
+
+void Application::SetPendingFormat(const CharFormat& f)
+{
+    m_pendingFormat       = f;
+    m_pendingFormatActive = true;
+    m_pendingFormatRow    = m_cursor.row;
+    m_pendingFormatCol    = m_cursor.column;
+}
+
 void Application::ApplyStyleAction(uint8_t bit)
 {
     if (bit == 0) return;
@@ -4003,9 +4038,13 @@ void Application::ApplyStyleAction(uint8_t bit)
     }
     else
     {
-        // No selection: toggle the bit for next-typed input. No undo entry —
-        // this changes editor intent, not document content.
-        m_currentStyle ^= bit;
+        // No selection: toggle the bit for next-typed input via a pending
+        // caret override (seeded from the neighbor so toggling Bold doesn't
+        // drop the surrounding face/size/color). No undo entry — this changes
+        // editor intent, not document content.
+        CharFormat f = EffectiveTypingFormat();
+        f.style ^= bit;
+        SetPendingFormat(f);
     }
     m_lastActionWasInsert = false;
 }
@@ -4619,6 +4658,21 @@ void Application::Render()
     uiState.dirty         = m_document->IsDirty();
     uiState.statusMessage = m_statusMessage;
 
+    // Status-bar font indicator: the effective face/size for the next typed
+    // character, resolved against the document default (Inherit → default).
+    {
+        CharFormat tf = EffectiveTypingFormat();
+        FontFace face = (tf.face != CharFormat::Inherit
+                         && tf.face < static_cast<uint8_t>(FontFace::Count_))
+                        ? static_cast<FontFace>(tf.face)
+                        : m_documentFontSettings.face;
+        FontSize size = (tf.size != CharFormat::Inherit && tf.size < 4)
+                        ? FontSizeAt(static_cast<int>(tf.size))
+                        : m_documentFontSettings.size;
+        uiState.currentFontLabel = std::string(FontFaceName(face)) + " "
+                                 + FontSizeName(size);
+    }
+
     // Modal dialog overlay for prompts and confirmations (replaces the old
     // bottom-of-screen prompt). Active only for text/confirm modes.
     uiState.dialogActive = (m_promptMode == PromptMode::Open             ||
@@ -4740,20 +4794,19 @@ void Application::Render()
     uiState.showFontDialog        = (m_promptMode == PromptMode::FontDialog);
     uiState.fontDialogPresetIdx   = m_fontDialogPresetIdx;
     uiState.fontDialogScrollTop   = m_fontDialogScrollTop;
-    // "Active" preset = the effective next-typed font. When the user picks
-    // a face/size from the Font dialog without a selection, only
-    // m_currentFace / m_currentSize are updated; m_documentFontSettings
-    // stays put. The "*" indicator should still move to that pick — it
-    // represents "what your next character will look like," which is also
-    // what OpenFontDialog seeds the focused row from.
+    // "Active" preset = the effective next-typed font. It represents "what
+    // your next character will look like" (a pending pick or the inherited
+    // neighbor format), resolved against the document default — the same value
+    // OpenFontDialog seeds the focused row from.
     {
         FontFace activeFace = m_documentFontSettings.face;
         FontSize activeSize = m_documentFontSettings.size;
-        if (m_currentFace != CharFormat::Inherit
-            && m_currentFace < static_cast<uint8_t>(FontFace::Count_))
-            activeFace = static_cast<FontFace>(m_currentFace);
-        if (m_currentSize != CharFormat::Inherit && m_currentSize < 4)
-            activeSize = FontSizeAt(static_cast<int>(m_currentSize));
+        CharFormat tf = EffectiveTypingFormat();
+        if (tf.face != CharFormat::Inherit
+            && tf.face < static_cast<uint8_t>(FontFace::Count_))
+            activeFace = static_cast<FontFace>(tf.face);
+        if (tf.size != CharFormat::Inherit && tf.size < 4)
+            activeSize = FontSizeAt(static_cast<int>(tf.size));
         uiState.fontDialogActivePreset =
             static_cast<int>(activeFace) * FontSizeCount()
             + IndexOfFontSize(activeSize);
@@ -4769,7 +4822,8 @@ void Application::Render()
         uiState.colorDialogActive      = (m_promptMode == PromptMode::ColorDialog || isHl);
         uiState.colorDialogIsHighlight = isHl;
         uiState.colorDialogFocusIdx    = m_colorDialogFocusIdx;
-        uint8_t cur = isHl ? m_currentHighlight : m_currentColor;
+        CharFormat tf = EffectiveTypingFormat();
+        uint8_t cur = isHl ? tf.highlight : tf.color;
         uiState.colorDialogCurrent     = (cur == CharFormat::Inherit)
                                          ? -1 : static_cast<int>(cur);
     }
@@ -4883,7 +4937,7 @@ void Application::Render()
 
     if (m_promptMode == PromptMode::None)
     {
-        m_renderer->PaintBuffer(*m_screenBuffer);
+        m_renderer->PaintBuffer(*m_screenBuffer, m_layout.ROW_STATUS);
         WysiwygRenderer::DrawContext ctx = BuildWysiwygDrawContext();
 
         // Auto-scroll the page so the cursor stays visible.
@@ -4905,7 +4959,7 @@ void Application::Render()
     }
     else
     {
-        m_renderer->Render(*m_screenBuffer);
+        m_renderer->Render(*m_screenBuffer, m_layout.ROW_STATUS);
     }
 }
 
@@ -4964,11 +5018,14 @@ WysiwygRenderer::DrawContext Application::BuildWysiwygDrawContext() const
             && m_selectedFloat < static_cast<int>(m_document->Buffer().Floats().size()))
             ctx.selectedFloat = m_selectedFloat;
     }
-    if (m_currentFace != CharFormat::Inherit
-        && m_currentFace < static_cast<uint8_t>(FontFace::Count_))
-        ctx.insertFace = static_cast<FontFace>(m_currentFace);
-    if (m_currentSize != CharFormat::Inherit && m_currentSize < 4)
-        ctx.insertPointSize = FontSizePoints(FontSizeAt(static_cast<int>(m_currentSize)));
+    // Draw the caret at the size/face of what would be typed there (the
+    // pending pick or inherited neighbor format).
+    CharFormat tf = EffectiveTypingFormat();
+    if (tf.face != CharFormat::Inherit
+        && tf.face < static_cast<uint8_t>(FontFace::Count_))
+        ctx.insertFace = static_cast<FontFace>(tf.face);
+    if (tf.size != CharFormat::Inherit && tf.size < 4)
+        ctx.insertPointSize = FontSizePoints(FontSizeAt(static_cast<int>(tf.size)));
     return ctx;
 }
 

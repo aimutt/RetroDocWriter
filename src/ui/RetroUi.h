@@ -19,6 +19,9 @@ struct EditorUiState
     std::string       filename;
     bool              dirty         = false;
     std::string       statusMessage = "Ready";
+    // Effective font for the next typed character (face name + point size),
+    // e.g. "EB Garamond 12 pt". Shown centered in the status bar.
+    std::string       currentFontLabel;
 
     // Modal dialog overlay (centered, retro-styled)
     bool        dialogActive        = false;

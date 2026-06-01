@@ -324,6 +324,18 @@ void RetroUi::DrawStatusBar(ScreenBuffer& buffer, const Cursor& cursor,
         buffer.WriteText(posX, m_layout.ROW_STATUS, pos,
                          m_theme.dimText, m_theme.background);
 
+    // Centered font indicator (face + point size), drawn only when it fits
+    // clear of the left status message and the right cursor/word-count block.
+    if (!state.currentFontLabel.empty())
+    {
+        int len        = static_cast<int>(state.currentFontLabel.size());
+        int fontX      = (buffer.Columns() - len) / 2;
+        int leftEnd    = 1 + static_cast<int>(state.statusMessage.size());
+        int rightStart = (posX > 0) ? posX : buffer.Columns();
+        if (fontX > leftEnd && fontX + len < rightStart - 1)
+            buffer.WriteText(fontX, m_layout.ROW_STATUS, state.currentFontLabel,
+                             m_theme.dimText, m_theme.background);
+    }
 }
 
 // ---------------------------------------------------------------------------
