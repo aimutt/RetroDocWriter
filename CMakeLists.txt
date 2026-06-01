@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.24)
 project(RetroDocWriter VERSION 0.1.0 LANGUAGES CXX)
 
+# Windows resource compiler — used to embed the app icon and version info
+# (RetroDocWriter.rc). Gated to Windows so a future cross-platform port is
+# unaffected.
+if(WIN32)
+    enable_language(RC)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -32,8 +39,14 @@ find_package(SDL3_image CONFIG REQUIRED
 # Single-product layout: every .cpp lives under src/ with subdirectories
 # editor/, platform/, render/, ui/, app/. The src/ directory is the include
 # root so existing #include "editor/CharStyle.h" style paths resolve.
-add_executable(RetroDocWriter
+# WIN32 selects the Windows GUI subsystem so launching the app shows only the
+# SDL window — no console window behind it. The entry point stays int main(...);
+# src/main.cpp includes <SDL3/SDL_main.h>, which provides the WinMain shim.
+# (WIN32 is ignored on non-Windows platforms.)
+add_executable(RetroDocWriter WIN32
     src/main.cpp
+    # App icon + version info (Windows only; needs the RC language enabled above).
+    $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/RetroDocWriter.rc>
     src/app/Application.cpp
     src/editor/Dictionary.cpp
     src/editor/Dictionary.gen.cpp

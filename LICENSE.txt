@@ -1,0 +1,46 @@
+RetroDocWriter - End User License Agreement
+Copyright (c) 2026 aimutt.com. All rights reserved.
+
+PLEASE READ THIS AGREEMENT CAREFULLY BEFORE INSTALLING OR USING THE SOFTWARE.
+BY INSTALLING OR USING RETRODOCWRITER ("THE SOFTWARE") YOU AGREE TO BE BOUND BY
+THESE TERMS. IF YOU DO NOT AGREE, DO NOT INSTALL OR USE THE SOFTWARE.
+
+1. License Grant. The Software is provided free of charge. You are granted a
+   personal, non-exclusive license to install and use the Software at no cost.
+
+2. No Sale or Commercial Redistribution. The Software is and remains free. You
+   may NOT sell, resell, rent, lease, sublicense, or charge any fee for the
+   Software or for access to it, whether alone or bundled with any other product
+   or service. You may not redistribute the Software for commercial gain.
+
+3. Ownership. The Software is owned by aimutt.com and is protected by copyright
+   law. This agreement grants you no ownership of the Software. All rights not
+   expressly granted are reserved.
+
+4. No Warranty. THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT
+   WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+   NONINFRINGEMENT. THE AUTHOR DOES NOT WARRANT THAT THE SOFTWARE WILL BE
+   ERROR-FREE OR OPERATE WITHOUT INTERRUPTION.
+
+5. Limitation of Liability. TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT
+   SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY -
+   INCLUDING WITHOUT LIMITATION ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, OR
+   CONSEQUENTIAL DAMAGES, LOSS OF DATA, LOSS OF PROFITS, OR BUSINESS INTERRUPTION
+   - ARISING OUT OF OR IN ANY WAY CONNECTED WITH THE USE OF OR INABILITY TO USE
+   THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. YOU ASSUME
+   THE ENTIRE RISK AS TO THE USE, QUALITY, AND PERFORMANCE OF THE SOFTWARE.
+
+6. Your Documents. You are responsible for maintaining backups of any documents
+   or data you create or edit with the Software. The author is not responsible
+   for any loss of or damage to your files.
+
+7. Third-Party Components. The Software includes the SDL3, SDL3_ttf, and
+   SDL3_image libraries (zlib license), bundled fonts, and a word list, each
+   under their own open licenses. See THIRD-PARTY-NOTICES.txt for details.
+
+8. Termination. This license terminates automatically if you breach any term.
+   Upon termination you must stop using and delete all copies of the Software.
+
+9. Entire Agreement. This Agreement constitutes the entire agreement regarding
+   the Software and supersedes any prior understanding.
