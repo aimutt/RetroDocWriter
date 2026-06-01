@@ -1,0 +1,53 @@
+RetroDocWriter - Third-Party Notices
+====================================
+
+RetroDocWriter is distributed with the following third-party components. Each is
+the property of its respective authors and is provided under its own license.
+RetroDocWriter's own license (see LICENSE.txt) does not alter these terms.
+
+------------------------------------------------------------------------------
+SDL3, SDL3_ttf, SDL3_image
+------------------------------------------------------------------------------
+Copyright (c) Sam Lantinga and the SDL contributors.
+Licensed under the zlib license.
+
+  This software is provided 'as-is', without any express or implied warranty.
+  In no event will the authors be held liable for any damages arising from the
+  use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not claim
+     that you wrote the original software. If you use this software in a
+     product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+More information: https://www.libsdl.org
+
+------------------------------------------------------------------------------
+Bundled Fonts
+------------------------------------------------------------------------------
+The following fonts are bundled in assets/fonts/ and are each licensed under the
+SIL Open Font License, Version 1.1. The full license text for each accompanies
+the font files (assets/fonts/OFL-*.txt):
+
+  - Cascadia Mono        (c) Microsoft Corporation
+  - EB Garamond          (c) Georg Duffner, Octavio Pardo
+  - IBM Plex Mono        (c) IBM Corp.
+  - JetBrains Mono       (c) JetBrains s.r.o.
+  - Open Sans            (c) Steve Matteson / Google
+  - Source Sans 3        (c) Adobe Inc.
+  - Source Serif 4       (c) Adobe Inc.
+  - VT323                (c) Peter Hull
+
+------------------------------------------------------------------------------
+Spell-check Word List
+------------------------------------------------------------------------------
+Derived from the public-domain "words_alpha" list from the dwyl/english-words
+project (https://github.com/dwyl/english-words). Released into the public
+domain (Unlicense).
