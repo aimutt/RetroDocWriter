@@ -88,6 +88,20 @@ struct EditorUiState
     bool openDialogActive          = false;
     int  openDialogFocus           = 0;   // 0 = input field, 1 = selector
     bool openDefaultExtIsTxt       = false;
+    // When true, the generic input dialog (used by Save As) draws a [B] Browse
+    // button on its hint row. Other input-dialog users (Add/Remove/Check Word)
+    // leave it false so their layout is unchanged.
+    bool inputDialogShowBrowse     = false;
+
+    // File/folder browser (Open/Save As "Browse..."). A standalone modal that
+    // lists a directory's contents; the entries come from DirListing.
+    struct FileBrowserItem { std::string name; bool isDir = false; };
+    bool                         fileBrowserActive     = false;
+    bool                         fileBrowserSaveMode   = false;  // true = pick folder
+    std::string                  fileBrowserDir;                 // directory shown
+    std::vector<FileBrowserItem> fileBrowserItems;
+    int                          fileBrowserFocus      = 0;      // focused row
+    int                          fileBrowserScrollTop  = 0;      // first visible row
 
     // Word count
     int  wordCount             = 0;
@@ -189,14 +203,34 @@ public:
     Rect HelpScreenRect     (int screenColumns) const;
     Rect AboutScreenRect    (int screenColumns) const;
 
-    enum class InputHit { None, OkHint, CancelHint };
-    InputHit HitTestInputDialog(int cellCol, int cellRow, int screenColumns) const;
+    enum class InputHit { None, Browse, OkHint, CancelHint };
+    // `showBrowse` must match EditorUiState.inputDialogShowBrowse so the hint
+    // row is parsed with the same tokens that were drawn.
+    InputHit HitTestInputDialog(int cellCol, int cellRow, int screenColumns,
+                                bool showBrowse = false) const;
 
     enum class FindHit { None, InputField, Checkbox, OkHint, CancelHint };
     FindHit HitTestFindDialog(int cellCol, int cellRow, int screenColumns) const;
 
-    enum class OpenHit { None, InputField, ExtRtf, ExtTxt, OkHint, CancelHint };
+    enum class OpenHit { None, InputField, ExtRtf, ExtTxt, Browse, OkHint, CancelHint };
     OpenHit HitTestOpenDialog(int cellCol, int cellRow, int screenColumns) const;
+
+    // File/folder browser modal.
+    Rect FileBrowserRect(int screenColumns) const;
+    enum class FileBrowserHit { None, Row,
+                                ScrollUp, ScrollDown,
+                                ScrollThumb, ScrollTrackAbove, ScrollTrackBelow,
+                                SaveHereHint, CancelHint };
+    struct FileBrowserClick {
+        FileBrowserHit hit               = FileBrowserHit::None;
+        int            index             = -1;  // row index when hit == Row
+        int            grabOffsetInThumb = 0;   // valid when hit == ScrollThumb
+    };
+    // `itemCount` is the number of entries in the listing; `scrollTop` the
+    // first visible row; `saveMode` selects the matching hint string.
+    FileBrowserClick HitTestFileBrowser(int cellCol, int cellRow, int screenColumns,
+                                        int itemCount, int scrollTop,
+                                        bool saveMode) const;
 
     enum class WordCountHit { None, Checkbox, CloseHint };
     WordCountHit HitTestWordCountDialog(int cellCol, int cellRow, int screenColumns) const;
@@ -313,7 +347,7 @@ private:
     void DrawAboutScreen(ScreenBuffer& buffer);
     void DrawInputDialog(ScreenBuffer& buffer, const std::string& title,
                          const std::string& label, const std::string& input,
-                         bool cursorVisible);
+                         bool cursorVisible, bool showBrowse = false);
     void DrawConfirmDialog(ScreenBuffer& buffer, const std::string& title,
                            const std::string& line1, const std::string& line2,
                            const std::string& hint);
@@ -322,6 +356,7 @@ private:
     void DrawColorDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawFindDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawOpenDialog(ScreenBuffer& buffer, const EditorUiState& state);
+    void DrawFileBrowser(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawWordCountDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawPrintDialog(ScreenBuffer& buffer, const EditorUiState& state);
     void DrawMarginsDialog(ScreenBuffer& buffer, const EditorUiState& state);

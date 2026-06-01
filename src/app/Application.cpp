@@ -368,6 +368,67 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
         return;
     }
 
+    // File/folder browser — single-column list navigation.
+    if (m_promptMode == PromptMode::FileBrowser)
+    {
+        const int n = static_cast<int>(m_browseEntries.size());
+        constexpr int visibleRows = 12; // mirrors kFileBrowserVisibleRows in RetroUi.cpp
+        auto clampScroll = [&]() {
+            int maxScroll = std::max(0, n - visibleRows);
+            if (m_browseFocusIdx < m_browseScrollTop)
+                m_browseScrollTop = m_browseFocusIdx;
+            else if (m_browseFocusIdx >= m_browseScrollTop + visibleRows)
+                m_browseScrollTop = m_browseFocusIdx - visibleRows + 1;
+            m_browseScrollTop = std::clamp(m_browseScrollTop, 0, maxScroll);
+        };
+        switch (key.scancode)
+        {
+            case SDL_SCANCODE_UP:
+                if (m_browseFocusIdx > 0) --m_browseFocusIdx;
+                clampScroll();
+                break;
+            case SDL_SCANCODE_DOWN:
+                if (m_browseFocusIdx < n - 1) ++m_browseFocusIdx;
+                clampScroll();
+                break;
+            case SDL_SCANCODE_PAGEUP:
+                m_browseFocusIdx = std::max(0, m_browseFocusIdx - visibleRows);
+                clampScroll();
+                break;
+            case SDL_SCANCODE_PAGEDOWN:
+                m_browseFocusIdx = std::min(std::max(0, n - 1),
+                                            m_browseFocusIdx + visibleRows);
+                clampScroll();
+                break;
+            case SDL_SCANCODE_HOME:
+                m_browseFocusIdx = 0;
+                clampScroll();
+                break;
+            case SDL_SCANCODE_END:
+                m_browseFocusIdx = std::max(0, n - 1);
+                clampScroll();
+                break;
+            case SDL_SCANCODE_RETURN:
+                BrowseActivate();
+                break;
+            case SDL_SCANCODE_BACKSPACE:
+                m_browseDir       = ParentDirectory(m_browseDir);
+                m_browseFocusIdx  = 0;
+                m_browseScrollTop = 0;
+                RefreshBrowseListing();
+                break;
+            case SDL_SCANCODE_S:
+                if (m_browsePurpose == BrowsePurpose::SaveFolder) BrowseSaveHere();
+                break;
+            case SDL_SCANCODE_ESCAPE:
+                m_promptMode = m_browseReturnMode;
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
     // Theme picker — single-column up/down list.
     if (m_promptMode == PromptMode::ThemeDialog)
     {
@@ -870,6 +931,22 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
         }
     }
 
+    // Ctrl+B — launch the file/folder browser from the Open or Save As dialog.
+    // (Ctrl, so it never collides with typing a path/filename.)
+    if ((key.mod & SDL_KMOD_CTRL) != 0 && key.scancode == SDL_SCANCODE_B)
+    {
+        if (m_promptMode == PromptMode::Open)
+        {
+            OpenFileBrowser(BrowsePurpose::OpenFile, PromptMode::Open);
+            return;
+        }
+        if (m_promptMode == PromptMode::SaveAs)
+        {
+            OpenFileBrowser(BrowsePurpose::SaveFolder, PromptMode::SaveAs);
+            return;
+        }
+    }
+
     // Confirm dialogs all share Y/N/Esc semantics — keyboard path delegates to
     // the same ResolveConfirmYes / ResolveConfirmNo helpers used by the mouse
     // dispatcher so the two paths can't diverge.
@@ -1263,6 +1340,63 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
         return true;
     }
 
+    // File/folder browser
+    if (m_promptMode == PromptMode::FileBrowser)
+    {
+        const int n = static_cast<int>(m_browseEntries.size());
+        const int visRows = std::min(12, std::max(1, n));
+        auto rect = m_ui->FileBrowserRect(m_screenColumns);
+        if (!rect.Contains(cellCol, cellRow))
+        {
+            m_promptMode  = m_browseReturnMode;
+            m_needsRedraw = true;
+            return true;
+        }
+        auto click = m_ui->HitTestFileBrowser(
+            cellCol, cellRow, m_screenColumns, n, m_browseScrollTop,
+            m_browsePurpose == BrowsePurpose::SaveFolder);
+        int maxScroll = std::max(0, n - 12);
+        switch (click.hit)
+        {
+            case RetroUi::FileBrowserHit::Row:
+                if (click.index == m_browseFocusIdx)
+                    BrowseActivate();                  // second click activates
+                else { m_browseFocusIdx = click.index; m_needsRedraw = true; }
+                break;
+            case RetroUi::FileBrowserHit::ScrollUp:
+                m_browseScrollTop = std::max(0, m_browseScrollTop - 1);
+                m_needsRedraw = true;
+                break;
+            case RetroUi::FileBrowserHit::ScrollDown:
+                m_browseScrollTop = std::min(maxScroll, m_browseScrollTop + 1);
+                m_needsRedraw = true;
+                break;
+            case RetroUi::FileBrowserHit::ScrollThumb:
+                m_scrollbarDragActive       = true;
+                m_scrollbarDragOwner        = PromptMode::FileBrowser;
+                m_scrollbarDragX            = rect.x + rect.w - 2;
+                m_scrollbarDragY            = rect.y + 2;
+                m_scrollbarDragHeight       = visRows;
+                m_scrollbarDragTotalItems   = n;
+                m_scrollbarDragVisibleItems = visRows;
+                m_scrollbarDragGrabOffset   = click.grabOffsetInThumb;
+                break;
+            case RetroUi::FileBrowserHit::ScrollTrackAbove:
+            case RetroUi::FileBrowserHit::ScrollTrackBelow:
+                break;
+            case RetroUi::FileBrowserHit::SaveHereHint:
+                BrowseSaveHere();
+                break;
+            case RetroUi::FileBrowserHit::CancelHint:
+                m_promptMode  = m_browseReturnMode;
+                m_needsRedraw = true;
+                break;
+            default:
+                break;
+        }
+        return true;
+    }
+
     // Theme picker
     if (m_promptMode == PromptMode::ThemeDialog)
     {
@@ -1391,6 +1525,10 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
                 m_openDefaultExtIsTxt = true;
                 m_needsRedraw         = true;
                 break;
+            case RetroUi::OpenHit::Browse:
+                OpenFileBrowser(BrowsePurpose::OpenFile, PromptMode::Open);
+                m_needsRedraw = true;
+                break;
             case RetroUi::OpenHit::OkHint:
                 CommitPrompt();
                 m_needsRedraw = true;
@@ -1455,8 +1593,15 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
             m_needsRedraw = true;
             return true;
         }
-        auto hit = m_ui->HitTestInputDialog(cellCol, cellRow, m_screenColumns);
-        if (hit == RetroUi::InputHit::OkHint)
+        const bool showBrowse = (m_promptMode == PromptMode::SaveAs);
+        auto hit = m_ui->HitTestInputDialog(cellCol, cellRow, m_screenColumns, showBrowse);
+        if (hit == RetroUi::InputHit::Browse)
+        {
+            if (m_promptMode == PromptMode::SaveAs)
+                OpenFileBrowser(BrowsePurpose::SaveFolder, PromptMode::SaveAs);
+            m_needsRedraw = true;
+        }
+        else if (hit == RetroUi::InputHit::OkHint)
         {
             CommitPrompt();
             m_needsRedraw = true;
@@ -2026,6 +2171,13 @@ void Application::HandleMouseMotion(int cellCol, int cellRow, int px, int py)
                 {
                     m_fontDialogScrollTop = newScrollTop;
                     m_needsRedraw         = true;
+                }
+                break;
+            case PromptMode::FileBrowser:
+                if (newScrollTop != m_browseScrollTop)
+                {
+                    m_browseScrollTop = newScrollTop;
+                    m_needsRedraw     = true;
                 }
                 break;
             case PromptMode::None:
@@ -2794,6 +2946,98 @@ void Application::CancelPrompt()
     m_promptText.clear();
     m_statusMessage   = "Ready";
     m_exitAfterSave   = false;
+}
+
+// ---------------------------------------------------------------------------
+// In-app file/folder browser (Open / Save As "Browse...")
+// ---------------------------------------------------------------------------
+
+void Application::OpenFileBrowser(BrowsePurpose purpose, PromptMode returnMode)
+{
+    m_browsePurpose    = purpose;
+    m_browseReturnMode = returnMode;
+
+    // Prefer a directory derived from whatever the user already typed; fall
+    // back to a sensible default.
+    std::string startDir;
+    if (!m_promptText.empty())
+    {
+        if (IsDirectory(m_promptText))
+            startDir = m_promptText;
+        else
+        {
+            std::string parent = ParentDirectory(m_promptText);
+            if (IsDirectory(parent)) startDir = parent;
+        }
+    }
+    if (startDir.empty())
+        startDir = DefaultBrowseDir(m_document ? m_document->Filename() : std::string());
+    if (startDir.empty())
+        startDir = ".";
+
+    m_browseDir       = startDir;
+    m_browseFocusIdx  = 0;
+    m_browseScrollTop = 0;
+    RefreshBrowseListing();
+    m_promptMode  = PromptMode::FileBrowser;
+    m_needsRedraw = true;
+}
+
+void Application::RefreshBrowseListing()
+{
+    const bool dirsOnly = (m_browsePurpose == BrowsePurpose::SaveFolder);
+    m_browseEntries = ListDirectory(m_browseDir, { ".rtf", ".txt" }, dirsOnly);
+
+    const int n = static_cast<int>(m_browseEntries.size());
+    m_browseFocusIdx = std::clamp(m_browseFocusIdx, 0, std::max(0, n - 1));
+
+    constexpr int visibleRows = 12;   // mirrors kFileBrowserVisibleRows in RetroUi.cpp
+    int maxScroll = std::max(0, n - visibleRows);
+    if (m_browseFocusIdx < m_browseScrollTop)
+        m_browseScrollTop = m_browseFocusIdx;
+    else if (m_browseFocusIdx >= m_browseScrollTop + visibleRows)
+        m_browseScrollTop = m_browseFocusIdx - visibleRows + 1;
+    m_browseScrollTop = std::clamp(m_browseScrollTop, 0, maxScroll);
+}
+
+void Application::BrowseActivate()
+{
+    if (m_browseFocusIdx < 0
+        || m_browseFocusIdx >= static_cast<int>(m_browseEntries.size()))
+        return;
+    const DirEntry& e = m_browseEntries[static_cast<size_t>(m_browseFocusIdx)];
+
+    if (e.isDir)
+    {
+        m_browseDir = (e.name == "..") ? ParentDirectory(m_browseDir)
+                                       : JoinPath(m_browseDir, e.name);
+        m_browseFocusIdx  = 0;
+        m_browseScrollTop = 0;
+        RefreshBrowseListing();
+        m_needsRedraw = true;
+        return;
+    }
+
+    // A file row only appears in OpenFile mode (SaveFolder lists dirs only).
+    // Route the chosen path through the normal Open commit path.
+    m_promptText = JoinPath(m_browseDir, e.name);
+    m_promptMode = PromptMode::Open;
+    CommitPrompt();
+    m_needsRedraw = true;
+}
+
+void Application::BrowseSaveHere()
+{
+    // Preserve any filename the user already typed (strip any directory part);
+    // otherwise just hand back the folder with a trailing separator.
+    std::string base = m_promptText;
+    size_t slash = base.find_last_of("/\\");
+    if (slash != std::string::npos) base = base.substr(slash + 1);
+
+    m_promptText = base.empty() ? (m_browseDir + "\\")
+                                : JoinPath(m_browseDir, base);
+    m_promptMode  = PromptMode::SaveAs;
+    m_needsRedraw = true;
 }
 
 void Application::RequestExit()
@@ -4838,6 +5082,23 @@ void Application::Render()
     uiState.openDialogActive          = (m_promptMode == PromptMode::Open);
     uiState.openDialogFocus           = m_openDialogFocus;
     uiState.openDefaultExtIsTxt       = m_openDefaultExtIsTxt;
+
+    // Save As shows a Browse button on the generic input dialog.
+    uiState.inputDialogShowBrowse     = (m_promptMode == PromptMode::SaveAs);
+
+    // File/folder browser modal.
+    uiState.fileBrowserActive   = (m_promptMode == PromptMode::FileBrowser);
+    uiState.fileBrowserSaveMode = (m_browsePurpose == BrowsePurpose::SaveFolder);
+    uiState.fileBrowserDir      = m_browseDir;
+    uiState.fileBrowserFocus    = m_browseFocusIdx;
+    uiState.fileBrowserScrollTop = m_browseScrollTop;
+    if (uiState.fileBrowserActive)
+    {
+        uiState.fileBrowserItems.clear();
+        uiState.fileBrowserItems.reserve(m_browseEntries.size());
+        for (const auto& e : m_browseEntries)
+            uiState.fileBrowserItems.push_back({ e.name, e.isDir });
+    }
 
     // Word count: only compute when the status bar or modal needs it.
     uiState.showWordCount         = m_showWordCount;

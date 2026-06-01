@@ -17,6 +17,9 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 ### Added
 - Status bar shows the current font face and point size (e.g. `EB Garamond 12 pt`)
   for the next character to be typed.
+- **Browse button** on the Open and Save As dialogs opens an in-app file/folder
+  browser (keyboard + mouse). Open browses to a file to open; Save As browses to
+  a folder to save into. Reachable by mouse or Ctrl+B.
 
 ### Changed
 - Status-bar text now renders at a smaller font size than the rest of the chrome,
