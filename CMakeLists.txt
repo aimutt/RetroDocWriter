@@ -64,6 +64,7 @@ add_executable(RetroDocWriter WIN32
     src/editor/WordCount.cpp
     src/platform/AppData.cpp
     src/platform/Beep.cpp
+    src/platform/DirListing.cpp
     src/platform/ImageDecode.cpp
     src/platform/Print.cpp
     src/platform/Window.cpp

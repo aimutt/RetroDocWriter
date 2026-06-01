@@ -88,6 +88,11 @@ void RetroUi::Draw(ScreenBuffer& buffer, const Cursor& cursor, const EditorUiSta
         DrawHeaderFooterDialog(buffer, state);
         CheckDialogBoundsRight(buffer, HeaderFooterDialogRect(buffer.Columns()), "HeaderFooterDialog");
     }
+    if (state.fileBrowserActive)
+    {
+        DrawFileBrowser(buffer, state);
+        CheckDialogBoundsRight(buffer, FileBrowserRect(buffer.Columns()), "FileBrowser");
+    }
 
     if (state.dialogActive)
     {
@@ -112,7 +117,8 @@ void RetroUi::Draw(ScreenBuffer& buffer, const Cursor& cursor, const EditorUiSta
         {
             DrawInputDialog(buffer, state.dialogTitle,
                             state.dialogPrompt, state.dialogInput,
-                            state.dialogCursorVisible);
+                            state.dialogCursorVisible,
+                            state.inputDialogShowBrowse);
             CheckDialogBoundsRight(buffer, InputDialogRect(buffer.Columns()), "InputDialog");
         }
     }
@@ -756,6 +762,12 @@ namespace
         return r;
     }
 
+    // Hint strings for the generic input dialog — shared by DrawInputDialog and
+    // HitTestInputDialog so the two parse exactly the same tokens. The Save As
+    // dialog passes showBrowse=true to surface the [B] Browse affordance.
+    const char* const kInputHintPlain  = "[Enter] OK    [Esc] Cancel";
+    const char* const kInputHintBrowse = "[B] Browse  [Enter] OK  [Esc] Cancel";
+
     // Returns the uppercase contents of the [bracketed] token whose click
     // region contains clickCol. Tokens span from their '[' to just before the
     // next '[' (or end of string), so the user can click the bracket text
@@ -877,7 +889,8 @@ RetroUi::Rect RetroUi::AboutScreenRect(int screenColumns) const
     return CenteredRect(screenColumns, m_layout.SCREEN_ROWS, outerWidth, outerHeight);
 }
 
-RetroUi::InputHit RetroUi::HitTestInputDialog(int cellCol, int cellRow, int screenColumns) const
+RetroUi::InputHit RetroUi::HitTestInputDialog(int cellCol, int cellRow, int screenColumns,
+                                              bool showBrowse) const
 {
     Rect r = InputDialogRect(screenColumns);
     if (!r.Contains(cellCol, cellRow)) return InputHit::None;
@@ -885,7 +898,9 @@ RetroUi::InputHit RetroUi::HitTestInputDialog(int cellCol, int cellRow, int scre
     // Hint sits at y + outerHeight - 2 (= y + 5), drawn at x + 2.
     if (cellRow == r.y + r.h - 2)
     {
-        std::string token = TokenAt("[Enter] OK    [Esc] Cancel", r.x + 2, cellCol);
+        std::string token = TokenAt(showBrowse ? kInputHintBrowse : kInputHintPlain,
+                                    r.x + 2, cellCol);
+        if (token == "B")     return InputHit::Browse;
         if (token == "ENTER") return InputHit::OkHint;
         if (token == "ESC")   return InputHit::CancelHint;
     }
@@ -1863,7 +1878,7 @@ void RetroUi::DrawAboutScreen(ScreenBuffer& buffer)
 
 void RetroUi::DrawInputDialog(ScreenBuffer& buffer, const std::string& title,
                                const std::string& label, const std::string& input,
-                               bool cursorVisible)
+                               bool cursorVisible, bool showBrowse)
 {
     static const int outerWidth  = 56;
     static const int outerHeight = 7;
@@ -1920,7 +1935,7 @@ void RetroUi::DrawInputDialog(ScreenBuffer& buffer, const std::string& title,
     }
 
     // Hint at the bottom inner row
-    const char* hint = "[Enter] OK    [Esc] Cancel";
+    const char* hint = showBrowse ? kInputHintBrowse : kInputHintPlain;
     buffer.WriteText(x + 2, y + outerHeight - 2, hint, dim, bg);
 }
 
@@ -2050,6 +2065,10 @@ namespace
     constexpr int kOpenSelectorTxtCol   = 33;   // .rtf chip is 8 cells; 3-cell gap
     constexpr int kOpenSelectorChipW    = 8;    // "(X) .rtf" / "(X) .txt"
     const char* const kOpenHint = "[Tab] Switch  [Space] Toggle  [Enter] OK  [Esc] Cancel";
+    // Browse button on its own row (the hint row is already full).
+    constexpr int     kOpenBrowseCol   = 2;
+    const char* const kOpenBrowseLabel = "[ Browse... ]";
+    constexpr int     kOpenBrowseW     = 13;   // strlen(kOpenBrowseLabel)
 }
 
 void RetroUi::DrawOpenDialog(ScreenBuffer& buffer, const EditorUiState& state)
@@ -2120,6 +2139,9 @@ void RetroUi::DrawOpenDialog(ScreenBuffer& buffer, const EditorUiState& state)
     buffer.WriteText(x + kOpenSelectorRtfCol, selY, rtfChip, selFg, selBg);
     buffer.WriteText(x + kOpenSelectorTxtCol, selY, txtChip, selFg, selBg);
 
+    // Browse button row (mouse target; Ctrl+B is the keyboard equivalent).
+    buffer.WriteText(x + kOpenBrowseCol, y + 7, kOpenBrowseLabel, bright, bg);
+
     // Hint at the bottom inner row
     buffer.WriteText(x + 2, y + outerHeight - 2, kOpenHint, dim, bg);
 }
@@ -2147,6 +2169,10 @@ RetroUi::OpenHit RetroUi::HitTestOpenDialog(int cellCol, int cellRow,
         if (inChip(kOpenSelectorRtfCol)) return OpenHit::ExtRtf;
         if (inChip(kOpenSelectorTxtCol)) return OpenHit::ExtTxt;
     }
+    if (cellRow == r.y + 7
+        && cellCol >= r.x + kOpenBrowseCol
+        && cellCol <  r.x + kOpenBrowseCol + kOpenBrowseW)
+        return OpenHit::Browse;
     if (cellRow == r.y + r.h - 2)
     {
         std::string token = TokenAt(kOpenHint, r.x + 2, cellCol);
@@ -2154,6 +2180,147 @@ RetroUi::OpenHit RetroUi::HitTestOpenDialog(int cellCol, int cellRow,
         if (token == "ESC")   return OpenHit::CancelHint;
     }
     return OpenHit::None;
+}
+
+// ---------------------------------------------------------------------------
+// File/folder browser modal (Open / Save As "Browse...")
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    constexpr int kFileBrowserVisibleRows = 12;
+    const char* const kBrowseHintOpen =
+        "[Enter] Open  [Bksp] Up  [Esc] Cancel";
+    const char* const kBrowseHintSave =
+        "[Enter] Open Dir  [S] Save Here  [Bksp] Up  [Esc] Cancel";
+
+    const char* BrowseHint(bool saveMode)
+    { return saveMode ? kBrowseHintSave : kBrowseHintOpen; }
+}
+
+RetroUi::Rect RetroUi::FileBrowserRect(int screenColumns) const
+{
+    // title + dir-path row + list + blank + hint + bottom border.
+    return CenteredRect(screenColumns, m_layout.SCREEN_ROWS,
+                        60, kFileBrowserVisibleRows + 5);
+}
+
+void RetroUi::DrawFileBrowser(ScreenBuffer& buffer, const EditorUiState& state)
+{
+    Rect r = FileBrowserRect(buffer.Columns());
+    const int x = r.x, y = r.y;
+    const int outerWidth  = r.w;
+    const int outerHeight = r.h;
+    const int itemCount   = static_cast<int>(state.fileBrowserItems.size());
+    const int visibleRows = std::min(kFileBrowserVisibleRows, std::max(1, itemCount));
+    const int listColW    = outerWidth - 5;   // borders(2) + padding(2) + scrollbar(1)
+
+    Color fg     = m_theme.normalText;
+    Color bg     = m_theme.background;
+    Color bright = m_theme.brightText;
+    Color dim    = m_theme.dimText;
+
+    DrawBox(buffer, x, y, outerWidth, outerHeight, fg, bg);
+
+    // Title centred in the top border.
+    const char* title = " Browse ";
+    int titleX = x + (outerWidth - static_cast<int>(std::strlen(title))) / 2;
+    buffer.WriteText(titleX, y, title, bright, bg);
+
+    // Directory path on the first inner row, left-truncated with "..." so the
+    // most specific (rightmost) part stays visible.
+    {
+        std::string path = state.fileBrowserDir;
+        int maxw = outerWidth - 4;
+        if (static_cast<int>(path.size()) > maxw)
+            path = "..." + path.substr(path.size() - (maxw - 3));
+        buffer.WriteText(x + 2, y + 1, path, dim, bg);
+    }
+
+    int scrollTop = std::clamp(state.fileBrowserScrollTop, 0,
+                               std::max(0, itemCount - visibleRows));
+
+    for (int k = 0; k < visibleRows; ++k)
+    {
+        int idx = scrollTop + k;
+        if (idx >= itemCount) break;
+        const auto& item = state.fileBrowserItems[static_cast<size_t>(idx)];
+
+        int  rowY    = y + 2 + k;
+        bool focused = (idx == state.fileBrowserFocus);
+        Color rowFg  = focused ? m_theme.reverseForeground : (item.isDir ? bright : fg);
+        Color rowBg  = focused ? m_theme.reverseBackground : bg;
+
+        for (int c = 0; c < listColW; ++c)
+            buffer.PutChar(x + 2 + c, rowY, U' ', rowFg, rowBg);
+
+        std::string label = item.isDir ? "[DIR] " : "      ";
+        label += item.name;
+        if (static_cast<int>(label.size()) > listColW) label.resize(listColW);
+        buffer.WriteText(x + 2, rowY, label, rowFg, rowBg);
+    }
+
+    DrawScrollbar(buffer, x + outerWidth - 2, y + 2, visibleRows,
+                  itemCount, visibleRows, scrollTop);
+
+    buffer.WriteText(x + 2, y + outerHeight - 2,
+                     BrowseHint(state.fileBrowserSaveMode), dim, bg);
+}
+
+RetroUi::FileBrowserClick RetroUi::HitTestFileBrowser(int cellCol, int cellRow,
+                                                      int screenColumns,
+                                                      int itemCount, int scrollTop,
+                                                      bool saveMode) const
+{
+    FileBrowserClick out;
+    Rect r = FileBrowserRect(screenColumns);
+    if (!r.Contains(cellCol, cellRow)) return out;
+
+    const int visibleRows = std::min(kFileBrowserVisibleRows, std::max(1, itemCount));
+
+    // Hint row.
+    if (cellRow == r.y + r.h - 2)
+    {
+        std::string token = TokenAt(BrowseHint(saveMode), r.x + 2, cellCol);
+        if (token == "S")   { out.hit = FileBrowserHit::SaveHereHint; return out; }
+        if (token == "ESC") { out.hit = FileBrowserHit::CancelHint;   return out; }
+        return out;
+    }
+
+    // Scrollbar column.
+    if (cellCol == r.x + r.w - 2)
+    {
+        ScrollbarHit sb = HitTestScrollbar(cellCol, cellRow,
+                                           r.x + r.w - 2, r.y + 2, visibleRows,
+                                           itemCount, visibleRows, scrollTop);
+        switch (sb.region)
+        {
+            case ScrollbarHit::Region::UpButton:    out.hit = FileBrowserHit::ScrollUp;         break;
+            case ScrollbarHit::Region::DownButton:  out.hit = FileBrowserHit::ScrollDown;       break;
+            case ScrollbarHit::Region::Thumb:
+                out.hit               = FileBrowserHit::ScrollThumb;
+                out.grabOffsetInThumb = sb.grabOffsetInThumb;
+                break;
+            case ScrollbarHit::Region::TrackAbove:  out.hit = FileBrowserHit::ScrollTrackAbove; break;
+            case ScrollbarHit::Region::TrackBelow:  out.hit = FileBrowserHit::ScrollTrackBelow; break;
+            case ScrollbarHit::Region::None:        break;
+        }
+        return out;
+    }
+
+    // Entry rows: y + 2 .. y + 1 + visibleRows.
+    int k = cellRow - (r.y + 2);
+    if (k >= 0 && k < visibleRows)
+    {
+        int idx = scrollTop + k;
+        if (idx >= 0 && idx < itemCount
+            && cellCol >= r.x + 1 && cellCol < r.x + r.w - 2)
+        {
+            out.hit   = FileBrowserHit::Row;
+            out.index = idx;
+        }
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------

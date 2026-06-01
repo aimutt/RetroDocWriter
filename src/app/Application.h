@@ -18,6 +18,7 @@
 #include "editor/RichUndoHistory.h"
 #include "editor/WordWrap.h"
 #include "platform/Print.h"
+#include "platform/DirListing.h"
 #include <SDL3/SDL.h>
 #include <memory>
 #include <string>
@@ -52,6 +53,7 @@ enum class PromptMode
     CaptionDialog,  // text input → set the selected image float's caption (Insert > Caption…)
     HeaderFooterDialog, // Page > Header / Footer… — six-slot editor for the band model
     ConfirmSaveAsRtf, // Ctrl+S on a .txt that has formatting: Y = SaveAs.rtf, N = flatten + save .txt
+    FileBrowser,      // Open/Save As "Browse..." — in-app file/folder picker
 };
 
 // Fields in the Print dialog, ordered for Tab cycling.
@@ -139,6 +141,16 @@ private:
     void StartFindPrompt();
     void CommitPrompt();
     void CancelPrompt();
+
+    // In-app file/folder browser (Open/Save As "Browse..."). OpenFileBrowser
+    // remembers the launching prompt (m_browseReturnMode) so Esc returns to it.
+    // OpenFile mode picks a file → opens it; SaveFolder mode picks the current
+    // directory → returns to Save As with the folder prefilled.
+    enum class BrowsePurpose { OpenFile, SaveFolder };
+    void OpenFileBrowser(BrowsePurpose purpose, PromptMode returnMode);
+    void RefreshBrowseListing();
+    void BrowseActivate();    // Enter on the focused row
+    void BrowseSaveHere();    // Save mode: choose the current directory
 
     // Find
     void DoFind(const std::string& query);
@@ -326,6 +338,14 @@ private:
     // Open dialog session-sticky state.
     int        m_openDialogFocus     = 0;     // 0 = input field, 1 = ext selector
     bool       m_openDefaultExtIsTxt = false; // false = .rtf default, true = .txt
+
+    // File/folder browser modal (Open/Save As "Browse...").
+    BrowsePurpose          m_browsePurpose    = BrowsePurpose::OpenFile;
+    PromptMode             m_browseReturnMode = PromptMode::Open;
+    std::string            m_browseDir;
+    std::vector<DirEntry>  m_browseEntries;
+    int                    m_browseFocusIdx   = 0;
+    int                    m_browseScrollTop  = 0;
     bool       m_lastActionWasInsert = false;
     bool       m_exitAfterSave       = false; // chain SaveAs dialog into program exit
     bool       m_swallowNextTextInput = false;// drop the TEXT_INPUT that follows a confirm Y/N
