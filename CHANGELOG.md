@@ -7,6 +7,10 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 ## [Unreleased]
 
 ### Fixed
+- Dragging a floating image (or shape) into a different paragraph now re-anchors
+  it to that paragraph on drop, so the text there wraps around it. Previously an
+  image moved into an earlier paragraph would just hover over and cover that
+  paragraph's text instead of reflowing it.
 - Typed text now inherits the formatting of the character before the cursor
   instead of "sticking" to the last font size/style used. Bumping a heading to
   a larger size no longer carries that size to text typed elsewhere. Inheritance

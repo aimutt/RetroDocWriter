@@ -2057,6 +2057,32 @@ void Application::HandleMouseUp(int /*cellCol*/, int /*cellRow*/,
     if (button != SDL_BUTTON_LEFT) return;
     if (m_floatDragActive)
     {
+        // Re-anchor the dropped float to the topmost paragraph its top edge now
+        // overlaps, re-basing its top/bottom twips so it doesn't visually jump.
+        // A float only narrows the free run for lines at/below its anchor row, so
+        // without this a float dragged into an earlier paragraph would just cover
+        // that paragraph's text instead of reflowing it. The undo step pushed on
+        // mousedown covers this, keeping the whole gesture one undo.
+        if (m_wysiwyg && m_document && m_floatDragIndex >= 0)
+        {
+            auto& floats = m_document->Buffer().FloatsMutable();
+            if (m_floatDragIndex < static_cast<int>(floats.size()))
+            {
+                WysiwygRenderer::DrawContext ctx = BuildWysiwygDrawContext();
+                ctx.viewportTopPx = m_wysiwygScrollPx;
+                auto r = m_wysiwyg->ComputeFloatReanchor(ctx, m_floatDragIndex);
+                if (r.changed)
+                {
+                    FloatObject& f = floats[static_cast<size_t>(m_floatDragIndex)];
+                    f.anchorRow = r.anchorRow;
+                    f.top       = r.topTwips;
+                    f.bottom    = r.bottomTwips;
+                    m_document->MarkDirty();
+                    UpdateWindowTitle();
+                    m_needsRedraw = true;
+                }
+            }
+        }
         m_floatDragActive = false;
         m_floatDragIndex  = -1;
         m_floatDragHandle = WysiwygRenderer::FloatHandle::None;

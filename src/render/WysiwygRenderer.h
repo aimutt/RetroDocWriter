@@ -114,6 +114,17 @@ public:
     struct FloatHit { int index = -1; FloatHandle handle = FloatHandle::None; };
     FloatHit HitTestFloat(const DrawContext& ctx, int px, int py);
 
+    // After a paragraph-anchored float has been dragged, recompute which buffer
+    // row it should be anchored to (the topmost row its top edge now overlaps)
+    // and re-base its top/bottom twips against that row so it doesn't visually
+    // jump. Returns `changed == false` when the anchor is unchanged or the float
+    // isn't paragraph-referenced (Page/Margin floats stay put). Application
+    // applies the result to the live FloatObject on drop so the newly overlapped
+    // paragraphs reflow around the image — a float only narrows the free run for
+    // lines at or below its anchor row.
+    struct FloatReanchor { bool changed = false; int anchorRow = 0; int topTwips = 0; int bottomTwips = 0; };
+    FloatReanchor ComputeFloatReanchor(const DrawContext& ctx, int floatIndex);
+
     void Draw(const DrawContext& ctx);
 
     // Given the current cursor position, returns an updated viewportTopPx

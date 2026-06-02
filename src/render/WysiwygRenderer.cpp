@@ -821,6 +821,79 @@ WysiwygRenderer::FloatHit WysiwygRenderer::HitTestFloat(const DrawContext& ctx, 
     return miss;
 }
 
+WysiwygRenderer::FloatReanchor
+WysiwygRenderer::ComputeFloatReanchor(const DrawContext& ctx, int floatIndex)
+{
+    FloatReanchor result;
+    if (!ctx.buffer || !ctx.formatted) return result;
+    const auto& floats = ctx.formatted->Floats();
+    if (floatIndex < 0 || floatIndex >= static_cast<int>(floats.size())) return result;
+    const FloatObject& f = floats[static_cast<size_t>(floatIndex)];
+    result.anchorRow   = f.anchorRow;
+    result.topTwips    = f.top;
+    result.bottomTwips = f.bottom;
+    // Only paragraph-anchored floats re-anchor; Page/Margin floats are
+    // intentionally fixed to the page/margin frame and must stay put.
+    if (f.vRef != FloatObject::VRef::Paragraph) return result;
+
+    const int dpi = std::max(48, ctx.screenDpi);
+    const int pageW    = static_cast<int>(kPaperWidthIn  * dpi);
+    const int pageH    = static_cast<int>(kPaperHeightIn * dpi);
+    const int mTop     = static_cast<int>(ctx.margins.topIn    * dpi);
+    const int mBottom  = static_cast<int>(ctx.margins.bottomIn * dpi);
+    const int mLeft    = static_cast<int>(ctx.margins.leftIn   * dpi);
+    const int mRight   = static_cast<int>(ctx.margins.rightIn  * dpi);
+    const int usableW  = std::max(1, pageW - mLeft - mRight);
+    const int usableH  = std::max(1, pageH - mTop  - mBottom);
+    const int pageStride = pageH + kPageGapPx;
+
+    LayoutPass pass;
+    LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
+                     ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
+    BuildLayoutPass(pass, *ctx.buffer, ctx.formatted,
+                    ctx.face, ctx.pointSize, m_theme.normalText, geom, &floats,
+                    [&](FontFace ff, int p) { return CacheFor(ff, p, dpi); },
+                    [&](FontFace ff, int p, unsigned int cp) {
+                        int px = std::max(1, (p * dpi + 36) / 72);
+                        return SubpxAdvance(ff, px, cp);
+                    });
+
+    // Locate this float's resolved rect to read its current top in absolute
+    // document pixels.
+    const FloatObject* base = &floats[0];
+    const ResolvedFloat* rf = nullptr;
+    for (const auto& r : pass.floats)
+        if (r.obj && static_cast<int>(r.obj - base) == floatIndex) { rf = &r; break; }
+    if (!rf) return result;
+    const int floatTopAbsY = rf->page * pageStride + mTop + rf->yTop;
+
+    // A buffer row's "top" in absolute document pixels — same formula as
+    // RowAtViewportTop. Pick the topmost row whose top edge is at or above the
+    // float's top, so the float's whole span sits at/below the new anchor and
+    // every overlapped paragraph reflows.
+    const int lastRow = ctx.buffer->LineCount() - 1;
+    int targetRow = 0;
+    for (int li = 0; li <= lastRow; ++li)
+    {
+        const auto& segs = pass.segments[li];
+        if (segs.empty()) continue;
+        const int absY = segs.front().page * pageStride + mTop + segs.front().yInPage;
+        if (absY <= floatTopAbsY) targetRow = li;
+        else break;
+    }
+
+    // Re-base top/bottom against the new anchor row so the image keeps its exact
+    // on-screen position; preserve the float's twip height exactly.
+    const auto& tsegs = pass.segments[targetRow];
+    if (tsegs.empty()) return result;
+    const int targetTopAbsY = tsegs.front().page * pageStride + mTop + tsegs.front().yInPage;
+    result.anchorRow   = targetRow;
+    result.topTwips    = (floatTopAbsY - targetTopAbsY) * 1440 / dpi;
+    result.bottomTwips = result.topTwips + (f.bottom - f.top);
+    result.changed     = (targetRow != f.anchorRow);
+    return result;
+}
+
 int WysiwygRenderer::ClampScrollForCursor(const DrawContext& ctx)
 {
     if (!ctx.buffer) return ctx.viewportTopPx;
