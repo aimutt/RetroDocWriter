@@ -39,15 +39,15 @@ find_package(SDL3_image CONFIG REQUIRED
 # Single-product layout: every .cpp lives under src/ with subdirectories
 # editor/, platform/, render/, ui/, app/. The src/ directory is the include
 # root so existing #include "editor/CharStyle.h" style paths resolve.
-# WIN32 selects the Windows GUI subsystem so launching the app shows only the
-# SDL window — no console window behind it. The entry point stays int main(...);
-# src/main.cpp includes <SDL3/SDL_main.h>, which provides the WinMain shim.
-# (WIN32 is ignored on non-Windows platforms.)
-add_executable(RetroDocWriter WIN32
-    src/main.cpp
-    # App icon + version info (Windows only; needs the RC language enabled above).
-    $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/RetroDocWriter.rc>
-    src/app/Application.cpp
+
+# ---------------------------------------------------------------------------
+# RetroDocCore — the SDL-free logic core (editor model, RTF I/O, settings,
+# screen buffer, theme). Built once as a STATIC library and linked by BOTH the
+# GUI app and the unit-test executable, so the tests exercise the real shipping
+# code with NO SDL context (see CLAUDE.md "Testing"), and the slow
+# Dictionary.gen.cpp compiles only once. ONLY add SDL-free translation units
+# here — anything that includes <SDL3/...> belongs in the executable below.
+add_library(RetroDocCore STATIC
     src/editor/Dictionary.cpp
     src/editor/Dictionary.gen.cpp
     src/editor/DocumentSettingsStore.cpp
@@ -63,16 +63,46 @@ add_executable(RetroDocWriter WIN32
     src/editor/UndoHistory.cpp
     src/editor/WordCount.cpp
     src/platform/AppData.cpp
-    src/platform/Beep.cpp
     src/platform/DirListing.cpp
+    src/render/ScreenBuffer.cpp
+    src/render/Theme.cpp
+)
+
+# PUBLIC so both the app and the test exe inherit the src/ include root simply
+# by linking RetroDocCore.
+target_include_directories(RetroDocCore PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_compile_options(RetroDocCore PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /utf-8>
+)
+
+# The generated dictionary translation unit emits more than 65536 COFF
+# sections in /O2 Release; compile it with /bigobj. (Applies wherever the file
+# compiles — now the RetroDocCore library.)
+set_source_files_properties(src/editor/Dictionary.gen.cpp
+    PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/bigobj>"
+)
+
+# ---------------------------------------------------------------------------
+# RetroDocWriter — the GUI application. main.cpp + every SDL-dependent unit;
+# links the SDL-free RetroDocCore for the document model.
+# WIN32 selects the Windows GUI subsystem so launching the app shows only the
+# SDL window — no console window behind it. The entry point stays int main(...);
+# src/main.cpp includes <SDL3/SDL_main.h>, which provides the WinMain shim.
+# (WIN32 is ignored on non-Windows platforms.)
+add_executable(RetroDocWriter WIN32
+    src/main.cpp
+    # App icon + version info (Windows only; needs the RC language enabled above).
+    $<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/RetroDocWriter.rc>
+    src/app/Application.cpp
+    src/platform/Beep.cpp
     src/platform/ImageDecode.cpp
     src/platform/Print.cpp
     src/platform/Window.cpp
     src/render/GlyphCache.cpp
     src/render/ImageCache.cpp
     src/render/RetroRenderer.cpp
-    src/render/ScreenBuffer.cpp
-    src/render/Theme.cpp
     src/render/WysiwygRenderer.cpp
     src/ui/RetroUi.cpp
 )
@@ -81,6 +111,7 @@ target_include_directories(RetroDocWriter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_link_libraries(RetroDocWriter PRIVATE
+    RetroDocCore
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
@@ -91,12 +122,6 @@ target_link_libraries(RetroDocWriter PRIVATE
 
 target_compile_options(RetroDocWriter PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /utf-8>
-)
-
-# The generated dictionary translation unit emits more than 65536 COFF
-# sections in /O2 Release; compile it with /bigobj.
-set_source_files_properties(src/editor/Dictionary.gen.cpp
-    PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/bigobj>"
 )
 
 # Copy SDL3.dll, SDL3_ttf.dll, and assets/ next to the EXE after each build.
@@ -114,4 +139,50 @@ add_custom_command(TARGET RetroDocWriter POST_BUILD
         ${CMAKE_SOURCE_DIR}/assets
         $<TARGET_FILE_DIR:RetroDocWriter>/assets
     COMMENT "Copying SDL3 DLLs and assets for RetroDocWriter"
+)
+
+# ---------------------------------------------------------------------------
+# Unit tests — doctest (vendored single header at tests/doctest/doctest.h).
+# A console executable that links RetroDocCore only (no SDL). It runs
+# automatically as a POST_BUILD step every time it is built, and FAILS THE
+# BUILD if any assertion fails (doctest exits with the failed-assertion count).
+# To add tests: drop a tests/test_*.cpp file and list it below.
+enable_testing()
+add_executable(RetroDocWriterTests
+    tests/test_main.cpp
+    tests/test_utf8.cpp
+    tests/test_textbuffer.cpp
+    tests/test_wordwrap.cpp
+    tests/test_wordcount.cpp
+    tests/test_formattedbuffer.cpp
+    tests/test_rtf_roundtrip.cpp
+    tests/test_richdocument.cpp
+    tests/test_undo.cpp
+    tests/test_selection.cpp
+    tests/test_filesettings.cpp
+    tests/test_docsettingsstore.cpp
+    tests/test_dirlisting.cpp
+    tests/test_headerfooter.cpp
+    tests/test_palette.cpp
+    tests/test_theme.cpp
+    tests/test_screenbuffer.cpp
+    tests/test_dictionary.cpp
+)
+
+target_link_libraries(RetroDocWriterTests PRIVATE RetroDocCore)
+
+target_include_directories(RetroDocWriterTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+target_compile_options(RetroDocWriterTests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /utf-8>
+)
+
+add_test(NAME unit COMMAND RetroDocWriterTests)
+
+# Run the tests after they build; a non-zero exit (any failing assertion)
+# fails the build — for both Debug and Release.
+add_custom_command(TARGET RetroDocWriterTests POST_BUILD
+    COMMAND $<TARGET_FILE:RetroDocWriterTests>
+    COMMENT "Running RetroDocWriter unit tests"
 )
