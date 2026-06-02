@@ -51,7 +51,7 @@ Application::Application()
     // choice. Document font (proportional, used by WysiwygRenderer) is
     // independent — see Options > Font.
     m_chromeFontSettings   = FontSettings{ FontFace::CascadiaMono, FontSize::Medium };
-    m_documentFontSettings = FontSettings{ FontFace::EBGaramond,   FontSize::Small  };
+    m_documentFontSettings = FontSettings{ FontFace::SourceSans,   FontSize::Small  };
 
     m_windowWidth  = DEFAULT_WINDOW_WIDTH;
     m_windowHeight = DEFAULT_WINDOW_HEIGHT;
@@ -418,9 +418,14 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
                 RefreshBrowseListing();
                 break;
             case SDL_SCANCODE_S:
-                if (m_browsePurpose == BrowsePurpose::SaveFolder) BrowseSaveHere();
+                if (m_browsePurpose == BrowsePurpose::SaveFolder)
+                {
+                    BrowseSaveHere();
+                    m_swallowNextTextInput = true;   // drop the literal 's' that follows
+                }
                 break;
             case SDL_SCANCODE_ESCAPE:
+                m_dialogDir  = m_browseDir;   // reflect where the user browsed
                 m_promptMode = m_browseReturnMode;
                 break;
             default:
@@ -954,7 +959,8 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
         m_promptMode == PromptMode::ConfirmExitClean    ||
         m_promptMode == PromptMode::ConfirmNew          ||
         m_promptMode == PromptMode::ConfirmWordWrap     ||
-        m_promptMode == PromptMode::ConfirmSaveAsRtf)
+        m_promptMode == PromptMode::ConfirmSaveAsRtf    ||
+        m_promptMode == PromptMode::ConfirmOverwrite)
     {
         switch (key.scancode)
         {
@@ -967,8 +973,9 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
                 ResolveConfirmNo();
                 break;
             case SDL_SCANCODE_ESCAPE:
-                m_promptMode    = PromptMode::None;
-                m_statusMessage = "Ready";
+                m_promptMode     = PromptMode::None;
+                m_statusMessage  = "Ready";
+                m_exitAfterSave  = false;   // abandon any pending save-before-exit
                 break;
             default:
                 break;
@@ -1348,6 +1355,7 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
         auto rect = m_ui->FileBrowserRect(m_screenColumns);
         if (!rect.Contains(cellCol, cellRow))
         {
+            m_dialogDir   = m_browseDir;
             m_promptMode  = m_browseReturnMode;
             m_needsRedraw = true;
             return true;
@@ -1388,6 +1396,7 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
                 BrowseSaveHere();
                 break;
             case RetroUi::FileBrowserHit::CancelHint:
+                m_dialogDir   = m_browseDir;
                 m_promptMode  = m_browseReturnMode;
                 m_needsRedraw = true;
                 break;
@@ -1621,13 +1630,15 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
         m_promptMode == PromptMode::ConfirmExitClean    ||
         m_promptMode == PromptMode::ConfirmNew          ||
         m_promptMode == PromptMode::ConfirmWordWrap     ||
-        m_promptMode == PromptMode::ConfirmSaveAsRtf)
+        m_promptMode == PromptMode::ConfirmSaveAsRtf    ||
+        m_promptMode == PromptMode::ConfirmOverwrite)
     {
         auto rect = m_ui->ConfirmDialogRect(m_screenColumns);
         if (!rect.Contains(cellCol, cellRow))
         {
             m_promptMode    = PromptMode::None;
             m_statusMessage = "Ready";
+            m_exitAfterSave = false;
             m_needsRedraw   = true;
             return true;
         }
@@ -1643,6 +1654,9 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
                 break;
             case PromptMode::ConfirmSaveAsRtf:
                 hint = "[Y] Save .rtf  [N] Save .txt  [Esc] Cancel";
+                break;
+            case PromptMode::ConfirmOverwrite:
+                hint = "[Y] Overwrite  [N] Rename  [Esc] Cancel";
                 break;
             default:
                 hint.clear(); // DrawConfirmDialog falls back to "[Y] Yes      [N] No"
@@ -1662,6 +1676,7 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
             case RetroUi::ConfirmHit::Cancel:
                 m_promptMode    = PromptMode::None;
                 m_statusMessage = "Ready";
+                m_exitAfterSave = false;
                 m_needsRedraw   = true;
                 break;
             default:
@@ -2809,6 +2824,7 @@ void Application::StartOpenPrompt()
     m_promptMode = PromptMode::Open;
     m_promptText.clear();
     m_openDialogFocus = 0;   // start on input; ext-selector value is sticky
+    m_dialogDir = DefaultBrowseDir(m_document ? m_document->Filename() : std::string());
     m_statusMessage.clear();
 }
 
@@ -2816,7 +2832,32 @@ void Application::StartSaveAsPrompt()
 {
     m_promptMode = PromptMode::SaveAs;
     m_promptText.clear();
+    m_dialogDir = DefaultBrowseDir(m_document ? m_document->Filename() : std::string());
     m_statusMessage.clear();
+}
+
+// The file-name field is resolved against m_dialogDir; an absolute path the
+// user typed wins outright.
+std::string Application::ResolveDialogPath(const std::string& name) const
+{
+    std::filesystem::path p(name);
+    if (p.is_absolute()) return p.string();
+    std::filesystem::path base = m_dialogDir.empty()
+                               ? std::filesystem::path(".")
+                               : std::filesystem::path(m_dialogDir);
+    return (base / p).string();
+}
+
+// The directory to show above the field — m_dialogDir when the field is empty,
+// otherwise the parent of the resolved path so it stays truthful even when the
+// user types a full or nested path.
+std::string Application::DialogDisplayDir() const
+{
+    if (m_promptText.empty())
+        return m_dialogDir;
+    std::filesystem::path parent =
+        std::filesystem::path(ResolveDialogPath(m_promptText)).parent_path();
+    return parent.empty() ? m_dialogDir : parent.string();
 }
 
 void Application::CommitPrompt()
@@ -2830,46 +2871,27 @@ void Application::CommitPrompt()
         {
             const std::string defaultExt =
                 m_openDefaultExtIsTxt ? ".txt" : ".rtf";
-            OpenFile(RichFileDocument::WithDefaultExtension(m_promptText,
-                                                            defaultExt));
+            OpenFile(RichFileDocument::WithDefaultExtension(
+                         ResolveDialogPath(m_promptText), defaultExt));
         }
     }
     else if (mode == PromptMode::SaveAs)
     {
         if (!m_promptText.empty())
         {
-            std::string path = RichFileDocument::WithDefaultExtension(m_promptText);
-            // Explicit Save As to a .txt destination with formatting present:
-            // flatten in memory so the in-editor view matches what's about to
-            // hit disk. Mirrors the Ctrl+S -> ConfirmSaveAsRtf -> N path.
-            bool flattened = false;
-            if (!RichFileDocument::IsRtfPath(path)
-                && m_document->Buffer().HasAnyFormatting())
+            std::string path = RichFileDocument::WithDefaultExtension(
+                                   ResolveDialogPath(m_promptText));
+            // Guard against silently clobbering existing work: if a file of
+            // that name already exists, confirm before writing.
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(path, ec))
             {
-                m_document->Buffer().FlattenAllStyles();
-                flattened = true;
-            }
-            if (m_document->SaveAs(path,
-                                   m_documentFontSettings.face,
-                                   FontSizePoints(m_documentFontSettings.size),
-                                   CurrentRtfPage()))
-            {
-                WriteSidecarForCurrentDocument();
-                m_undoHistory.MarkSaved();
-                m_statusMessage = flattened
-                    ? "Saved as plain text (formatting discarded)."
-                    : "Saved.";
-                UpdateWindowTitle();
-                if (m_exitAfterSave)
-                {
-                    m_exitAfterSave = false;
-                    m_running       = false;
-                }
+                m_pendingSavePath = path;
+                m_promptMode      = PromptMode::ConfirmOverwrite;
             }
             else
             {
-                m_statusMessage = "Error: could not save file";
-                m_exitAfterSave = false;
+                PerformSaveAs(path);
             }
         }
         else
@@ -2948,6 +2970,44 @@ void Application::CancelPrompt()
     m_exitAfterSave   = false;
 }
 
+void Application::PerformSaveAs(const std::string& path)
+{
+    // Explicit Save As to a .txt destination with formatting present: flatten
+    // in memory so the in-editor view matches what's about to hit disk. Mirrors
+    // the Ctrl+S -> ConfirmSaveAsRtf -> N path. (Only happens here, on a save
+    // that actually proceeds — a declined overwrite never mutates the buffer.)
+    bool flattened = false;
+    if (!RichFileDocument::IsRtfPath(path)
+        && m_document->Buffer().HasAnyFormatting())
+    {
+        m_document->Buffer().FlattenAllStyles();
+        flattened = true;
+    }
+    if (m_document->SaveAs(path,
+                           m_documentFontSettings.face,
+                           FontSizePoints(m_documentFontSettings.size),
+                           CurrentRtfPage()))
+    {
+        WriteSidecarForCurrentDocument();
+        m_undoHistory.MarkSaved();
+        m_statusMessage = flattened
+            ? "Saved as plain text (formatting discarded)."
+            : "Saved.";
+        UpdateWindowTitle();
+        if (m_exitAfterSave)
+        {
+            m_exitAfterSave = false;
+            m_running       = false;
+        }
+    }
+    else
+    {
+        m_statusMessage = "Error: could not save file";
+        m_exitAfterSave = false;
+    }
+    m_promptText.clear();
+}
+
 // ---------------------------------------------------------------------------
 // In-app file/folder browser (Open / Save As "Browse...")
 // ---------------------------------------------------------------------------
@@ -2957,20 +3017,9 @@ void Application::OpenFileBrowser(BrowsePurpose purpose, PromptMode returnMode)
     m_browsePurpose    = purpose;
     m_browseReturnMode = returnMode;
 
-    // Prefer a directory derived from whatever the user already typed; fall
-    // back to a sensible default.
-    std::string startDir;
-    if (!m_promptText.empty())
-    {
-        if (IsDirectory(m_promptText))
-            startDir = m_promptText;
-        else
-        {
-            std::string parent = ParentDirectory(m_promptText);
-            if (IsDirectory(parent)) startDir = parent;
-        }
-    }
-    if (startDir.empty())
+    // Start where the dialog currently points (the "Dir:" line the user sees).
+    std::string startDir = DialogDisplayDir();
+    if (startDir.empty() || !IsDirectory(startDir))
         startDir = DefaultBrowseDir(m_document ? m_document->Filename() : std::string());
     if (startDir.empty())
         startDir = ".";
@@ -3028,14 +3077,14 @@ void Application::BrowseActivate()
 
 void Application::BrowseSaveHere()
 {
-    // Preserve any filename the user already typed (strip any directory part);
-    // otherwise just hand back the folder with a trailing separator.
+    // The chosen folder becomes the dialog's directory (shown above the field);
+    // keep just the filename the user already typed (strip any directory part).
     std::string base = m_promptText;
     size_t slash = base.find_last_of("/\\");
     if (slash != std::string::npos) base = base.substr(slash + 1);
 
-    m_promptText = base.empty() ? (m_browseDir + "\\")
-                                : JoinPath(m_browseDir, base);
+    m_dialogDir   = m_browseDir;
+    m_promptText  = base;
     m_promptMode  = PromptMode::SaveAs;
     m_needsRedraw = true;
 }
@@ -3648,6 +3697,9 @@ void Application::ResolveConfirmYes()
             m_statusMessage.clear();
             break;
         }
+        case PromptMode::ConfirmOverwrite:
+            PerformSaveAs(m_pendingSavePath);
+            break;
         default:
             break;
     }
@@ -3688,6 +3740,16 @@ void Application::ResolveConfirmNo()
             {
                 m_statusMessage = "Error: could not save file";
             }
+            break;
+        case PromptMode::ConfirmOverwrite:
+            // Decline the overwrite → back to Save As so the user can rename.
+            // Reconstruct the field from the resolved path (CommitPrompt's tail
+            // cleared m_promptText). Keep m_exitAfterSave so a pending
+            // save-before-exit still chains on the next successful save.
+            m_dialogDir  = std::filesystem::path(m_pendingSavePath).parent_path().string();
+            m_promptText = std::filesystem::path(m_pendingSavePath).filename().string();
+            m_promptMode = PromptMode::SaveAs;
+            m_statusMessage.clear();
             break;
         default:
             break;
@@ -4247,14 +4309,25 @@ CharFormat Application::EffectiveTypingFormat() const
         return m_pendingFormat;
     if (m_document)
     {
+        const auto& buf = m_document->Buffer();
         // 2. Inherit the character immediately to the left.
         if (m_cursor.column > 0)
-            return m_document->Buffer().FormatAt(m_cursor.row, m_cursor.column - 1);
+            return buf.FormatAt(m_cursor.row, m_cursor.column - 1);
         // 3. Start of a non-empty line: inherit the first character.
-        if (m_document->Buffer().LineLength(m_cursor.row) > 0)
-            return m_document->Buffer().FormatAt(m_cursor.row, 0);
+        if (buf.LineLength(m_cursor.row) > 0)
+            return buf.FormatAt(m_cursor.row, 0);
+        // 4. Empty line: continue the nearest text instead of snapping back to
+        //    the document default — the previous non-empty line's last char, else
+        //    the next non-empty line's first char. (Scan is capped so an empty
+        //    caret far from any text in a huge doc stays cheap.)
+        constexpr int kScanCap = 256;
+        for (int r = m_cursor.row - 1, n = 0; r >= 0 && n < kScanCap; --r, ++n)
+            if (buf.LineLength(r) > 0) return buf.FormatAt(r, buf.LineLength(r) - 1);
+        for (int r = m_cursor.row + 1, n = 0;
+             r < buf.LineCount() && n < kScanCap; ++r, ++n)
+            if (buf.LineLength(r) > 0) return buf.FormatAt(r, 0);
     }
-    // 4. Empty line / no document: document default (all-Inherit, style 0).
+    // 5. Truly empty document / no document: document default (all-Inherit).
     return CharFormat{};
 }
 
@@ -4928,6 +5001,7 @@ void Application::Render()
                             m_promptMode == PromptMode::ConfirmNew       ||
                             m_promptMode == PromptMode::ConfirmWordWrap  ||
                             m_promptMode == PromptMode::ConfirmSaveAsRtf ||
+                            m_promptMode == PromptMode::ConfirmOverwrite  ||
                             m_promptMode == PromptMode::AddWordDialog    ||
                             m_promptMode == PromptMode::RemoveWordDialog ||
                             m_promptMode == PromptMode::CheckWordDialog);
@@ -4935,7 +5009,8 @@ void Application::Render()
                                m_promptMode == PromptMode::ConfirmExitClean    ||
                                m_promptMode == PromptMode::ConfirmNew          ||
                                m_promptMode == PromptMode::ConfirmWordWrap     ||
-                               m_promptMode == PromptMode::ConfirmSaveAsRtf);
+                               m_promptMode == PromptMode::ConfirmSaveAsRtf    ||
+                               m_promptMode == PromptMode::ConfirmOverwrite);
     uiState.dialogInput         = m_promptText;
     uiState.dialogCursorVisible = m_cursor.visible;
     uiState.dialogHint.clear();
@@ -4949,7 +5024,7 @@ void Application::Render()
             break;
         case PromptMode::SaveAs:
             uiState.dialogTitle   = "Save As";
-            uiState.dialogPrompt  = "File path (.rtf default):";
+            uiState.dialogPrompt  = "File name (.rtf default):";
             uiState.dialogPrompt2 = "";
             break;
         case PromptMode::InsertImage:
@@ -4995,6 +5070,17 @@ void Application::Render()
             uiState.dialogPrompt2 = "Save as .rtf to preserve it?";
             uiState.dialogHint    = "[Y] Save .rtf  [N] Save .txt  [Esc] Cancel";
             break;
+        case PromptMode::ConfirmOverwrite:
+        {
+            std::string name = std::filesystem::path(m_pendingSavePath).filename().string();
+            const size_t kMax = 44;   // keep line1 inside the 56-wide confirm box
+            if (name.size() > kMax) name = name.substr(0, kMax - 3) + "...";
+            uiState.dialogTitle   = "File Exists";
+            uiState.dialogPrompt  = "\"" + name + "\" already exists.";
+            uiState.dialogPrompt2 = "Overwrite the existing file?";
+            uiState.dialogHint    = "[Y] Overwrite  [N] Rename  [Esc] Cancel";
+            break;
+        }
         case PromptMode::AddWordDialog:
             uiState.dialogTitle   = "Add to Dictionary";
             uiState.dialogPrompt  = "Word to add:";
@@ -5085,6 +5171,12 @@ void Application::Render()
 
     // Save As shows a Browse button on the generic input dialog.
     uiState.inputDialogShowBrowse     = (m_promptMode == PromptMode::SaveAs);
+
+    // Directory shown above the file-name field in the Open / Save As dialogs.
+    if (m_promptMode == PromptMode::Open || m_promptMode == PromptMode::SaveAs)
+        uiState.inputDialogDir = DialogDisplayDir();
+    else
+        uiState.inputDialogDir.clear();
 
     // File/folder browser modal.
     uiState.fileBrowserActive   = (m_promptMode == PromptMode::FileBrowser);

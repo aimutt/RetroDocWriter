@@ -118,7 +118,8 @@ void RetroUi::Draw(ScreenBuffer& buffer, const Cursor& cursor, const EditorUiSta
             DrawInputDialog(buffer, state.dialogTitle,
                             state.dialogPrompt, state.dialogInput,
                             state.dialogCursorVisible,
-                            state.inputDialogShowBrowse);
+                            state.inputDialogShowBrowse,
+                            state.inputDialogDir);
             CheckDialogBoundsRight(buffer, InputDialogRect(buffer.Columns()), "InputDialog");
         }
     }
@@ -313,13 +314,11 @@ void RetroUi::DrawEditorArea(ScreenBuffer& buffer, const TextBuffer& textBuffer,
 void RetroUi::DrawStatusBar(ScreenBuffer& buffer, const Cursor& cursor,
                              const EditorUiState& state)
 {
+    const int row = m_layout.ROW_STATUS;
     for (int col = 0; col < buffer.Columns(); ++col)
-        buffer.PutChar(col, m_layout.ROW_STATUS, U' ',
-                       m_theme.normalText, m_theme.background);
+        buffer.PutChar(col, row, U' ', m_theme.normalText, m_theme.background);
 
-    buffer.WriteText(1, m_layout.ROW_STATUS, state.statusMessage,
-                     m_theme.normalText, m_theme.background);
-
+    // Right: cursor position (+ optional word count).
     std::string pos;
     if (state.showWordCount)
         pos = "Words: " + std::to_string(state.wordCount) + "  ";
@@ -327,21 +326,38 @@ void RetroUi::DrawStatusBar(ScreenBuffer& buffer, const Cursor& cursor,
          + ", Col " + std::to_string(cursor.column + 1);
     int posX = buffer.Columns() - static_cast<int>(pos.size()) - 1;
     if (posX > 0)
-        buffer.WriteText(posX, m_layout.ROW_STATUS, pos,
-                         m_theme.dimText, m_theme.background);
+        buffer.WriteText(posX, row, pos, m_theme.dimText, m_theme.background);
 
-    // Centered font indicator (face + point size), drawn only when it fits
-    // clear of the left status message and the right cursor/word-count block.
+    // Center/right: the font indicator (face + point size). It's the persistent,
+    // useful bit, so it always shows when there's room — centered when it fits
+    // clear of both neighbors, otherwise right-aligned just left of the Ln/Col
+    // block. The (transient) status message is clipped before it, never the
+    // other way around, so the size is never dropped.
+    const int rightBlock = (posX > 0) ? posX : buffer.Columns();
+    int statusEnd        = rightBlock;          // status message must stop before here
     if (!state.currentFontLabel.empty())
     {
-        int len        = static_cast<int>(state.currentFontLabel.size());
-        int fontX      = (buffer.Columns() - len) / 2;
-        int leftEnd    = 1 + static_cast<int>(state.statusMessage.size());
-        int rightStart = (posX > 0) ? posX : buffer.Columns();
-        if (fontX > leftEnd && fontX + len < rightStart - 1)
-            buffer.WriteText(fontX, m_layout.ROW_STATUS, state.currentFontLabel,
+        int len     = static_cast<int>(state.currentFontLabel.size());
+        int centerX = (buffer.Columns() - len) / 2;
+        int leftMin = 1 + static_cast<int>(state.statusMessage.size()) + 1;
+        int fontX;
+        if (centerX > leftMin && centerX + len < rightBlock - 1)
+            fontX = centerX;                    // fits centered
+        else
+            fontX = rightBlock - 2 - len;       // fall back to right-aligned
+        if (fontX >= 1)
+        {
+            buffer.WriteText(fontX, row, state.currentFontLabel,
                              m_theme.dimText, m_theme.background);
+            statusEnd = fontX;                  // clip the status message before it
+        }
     }
+
+    // Left: status message, clipped so it never overruns the font label.
+    int maxLen = std::max(0, statusEnd - 1 - 1);   // cols 1 .. statusEnd-2
+    std::string msg = state.statusMessage;
+    if (static_cast<int>(msg.size()) > maxLen) msg.resize(static_cast<size_t>(maxLen));
+    buffer.WriteText(1, row, msg, m_theme.normalText, m_theme.background);
 }
 
 // ---------------------------------------------------------------------------
@@ -764,9 +780,12 @@ namespace
 
     // Hint strings for the generic input dialog — shared by DrawInputDialog and
     // HitTestInputDialog so the two parse exactly the same tokens. The Save As
-    // dialog passes showBrowse=true to surface the [B] Browse affordance.
+    // dialog passes showBrowse=true to surface the browse affordance. "^B" is
+    // the app's caret convention for Ctrl+B (matches the function-key bar's
+    // "^Z Undo") — the keyboard shortcut is Ctrl+B, not a bare letter, so it
+    // doesn't collide with typing a filename into the input field.
     const char* const kInputHintPlain  = "[Enter] OK    [Esc] Cancel";
-    const char* const kInputHintBrowse = "[B] Browse  [Enter] OK  [Esc] Cancel";
+    const char* const kInputHintBrowse = "[^B] Browse  [Enter] OK  [Esc] Cancel";
 
     // Returns the uppercase contents of the [bracketed] token whose click
     // region contains clickCol. Tokens span from their '[' to just before the
@@ -900,7 +919,7 @@ RetroUi::InputHit RetroUi::HitTestInputDialog(int cellCol, int cellRow, int scre
     {
         std::string token = TokenAt(showBrowse ? kInputHintBrowse : kInputHintPlain,
                                     r.x + 2, cellCol);
-        if (token == "B")     return InputHit::Browse;
+        if (token == "^B")    return InputHit::Browse;
         if (token == "ENTER") return InputHit::OkHint;
         if (token == "ESC")   return InputHit::CancelHint;
     }
@@ -1876,9 +1895,23 @@ void RetroUi::DrawAboutScreen(ScreenBuffer& buffer)
 // Modal dialogs (centered text-mode windows for prompts and confirmations)
 // ---------------------------------------------------------------------------
 
+void RetroUi::DrawDirLine(ScreenBuffer& buffer, int x, int y, int innerWidth,
+                          const std::string& dir)
+{
+    if (dir.empty() || innerWidth <= 0) return;
+    const std::string prefix = "Dir: ";
+    int avail = innerWidth - static_cast<int>(prefix.size());
+    if (avail < 4) return;   // not enough room to say anything useful
+    std::string p = dir;
+    if (static_cast<int>(p.size()) > avail)
+        p = "..." + p.substr(p.size() - static_cast<size_t>(avail - 3));
+    buffer.WriteText(x + 2, y, prefix + p, m_theme.dimText, m_theme.background);
+}
+
 void RetroUi::DrawInputDialog(ScreenBuffer& buffer, const std::string& title,
                                const std::string& label, const std::string& input,
-                               bool cursorVisible, bool showBrowse)
+                               bool cursorVisible, bool showBrowse,
+                               const std::string& dirLine)
 {
     static const int outerWidth  = 56;
     static const int outerHeight = 7;
@@ -1899,6 +1932,9 @@ void RetroUi::DrawInputDialog(ScreenBuffer& buffer, const std::string& title,
     std::string t = " " + title + " ";
     int titleX = x + (outerWidth - static_cast<int>(t.size())) / 2;
     buffer.WriteText(titleX, y, t, bright, bg);
+
+    // Optional directory line on the otherwise-blank row above the label.
+    DrawDirLine(buffer, x, y + 1, outerWidth - 4, dirLine);
 
     // Prompt label one line below the title
     buffer.WriteText(x + 2, y + 2, label, fg, bg);
@@ -2067,8 +2103,8 @@ namespace
     const char* const kOpenHint = "[Tab] Switch  [Space] Toggle  [Enter] OK  [Esc] Cancel";
     // Browse button on its own row (the hint row is already full).
     constexpr int     kOpenBrowseCol   = 2;
-    const char* const kOpenBrowseLabel = "[ Browse... ]";
-    constexpr int     kOpenBrowseW     = 13;   // strlen(kOpenBrowseLabel)
+    const char* const kOpenBrowseLabel = "[^B] Browse";   // ^B = Ctrl+B (app caret convention)
+    constexpr int     kOpenBrowseW     = 11;   // strlen(kOpenBrowseLabel)
 }
 
 void RetroUi::DrawOpenDialog(ScreenBuffer& buffer, const EditorUiState& state)
@@ -2091,8 +2127,11 @@ void RetroUi::DrawOpenDialog(ScreenBuffer& buffer, const EditorUiState& state)
     int titleX = x + (outerWidth - static_cast<int>(t.size())) / 2;
     buffer.WriteText(titleX, y, t, bright, bg);
 
+    // Directory the file will open from, on the otherwise-blank row above.
+    DrawDirLine(buffer, x, y + 1, outerWidth - 4, state.inputDialogDir);
+
     // Prompt label
-    buffer.WriteText(x + 2, y + 2, "File path:", fg, bg);
+    buffer.WriteText(x + 2, y + 2, "File name:", fg, bg);
 
     // Bracketed input field (row y+3, cols x+2 .. x+outerWidth-3)
     const bool inputFocused = (state.openDialogFocus == 0);

@@ -53,6 +53,7 @@ enum class PromptMode
     CaptionDialog,  // text input → set the selected image float's caption (Insert > Caption…)
     HeaderFooterDialog, // Page > Header / Footer… — six-slot editor for the band model
     ConfirmSaveAsRtf, // Ctrl+S on a .txt that has formatting: Y = SaveAs.rtf, N = flatten + save .txt
+    ConfirmOverwrite, // Save As to an existing file: Y = overwrite, N = rename, Esc = cancel
     FileBrowser,      // Open/Save As "Browse..." — in-app file/folder picker
 };
 
@@ -141,6 +142,10 @@ private:
     void StartFindPrompt();
     void CommitPrompt();
     void CancelPrompt();
+    // Performs the actual Save As write to `path` (flatten-if-.txt, SaveAs,
+    // sidecar, MarkSaved, status, exit-after-save). Called directly when the
+    // target doesn't exist, or from the overwrite confirmation's Yes.
+    void PerformSaveAs(const std::string& path);
 
     // In-app file/folder browser (Open/Save As "Browse..."). OpenFileBrowser
     // remembers the launching prompt (m_browseReturnMode) so Esc returns to it.
@@ -151,6 +156,12 @@ private:
     void RefreshBrowseListing();
     void BrowseActivate();    // Enter on the focused row
     void BrowseSaveHere();    // Save mode: choose the current directory
+
+    // Open/Save As dialogs: the file-name field is resolved against the
+    // dialog's current directory (m_dialogDir, shown above the field). An
+    // absolute path the user types overrides it.
+    std::string ResolveDialogPath(const std::string& name) const;
+    std::string DialogDisplayDir() const;
 
     // Find
     void DoFind(const std::string& query);
@@ -338,6 +349,14 @@ private:
     // Open dialog session-sticky state.
     int        m_openDialogFocus     = 0;     // 0 = input field, 1 = ext selector
     bool       m_openDefaultExtIsTxt = false; // false = .rtf default, true = .txt
+
+    // Current directory shown above the Open/Save As file-name field; the
+    // typed name resolves against it. Initialized when each dialog opens and
+    // kept in sync with the in-app browser.
+    std::string            m_dialogDir;
+
+    // Resolved Save As target held while the overwrite confirmation is shown.
+    std::string            m_pendingSavePath;
 
     // File/folder browser modal (Open/Save As "Browse...").
     BrowsePurpose          m_browsePurpose    = BrowsePurpose::OpenFile;

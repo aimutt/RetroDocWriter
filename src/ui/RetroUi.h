@@ -92,6 +92,10 @@ struct EditorUiState
     // button on its hint row. Other input-dialog users (Add/Remove/Check Word)
     // leave it false so their layout is unchanged.
     bool inputDialogShowBrowse     = false;
+    // Directory shown above the file-name field in the Open / Save As dialogs
+    // (the typed name resolves against it). Empty for other input dialogs, which
+    // then keep their original blank row.
+    std::string inputDialogDir;
 
     // File/folder browser (Open/Save As "Browse..."). A standalone modal that
     // lists a directory's contents; the entries come from DirListing.
@@ -347,7 +351,12 @@ private:
     void DrawAboutScreen(ScreenBuffer& buffer);
     void DrawInputDialog(ScreenBuffer& buffer, const std::string& title,
                          const std::string& label, const std::string& input,
-                         bool cursorVisible, bool showBrowse = false);
+                         bool cursorVisible, bool showBrowse = false,
+                         const std::string& dirLine = {});
+    // Draws "Dir: <path>" at (x+2, y) in dim text, left-truncated with a leading
+    // "..." so the meaningful tail of the path stays visible within innerWidth.
+    void DrawDirLine(ScreenBuffer& buffer, int x, int y, int innerWidth,
+                     const std::string& dir);
     void DrawConfirmDialog(ScreenBuffer& buffer, const std::string& title,
                            const std::string& line1, const std::string& line2,
                            const std::string& hint);
