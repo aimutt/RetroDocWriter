@@ -963,6 +963,11 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
             OpenFileBrowser(BrowsePurpose::SaveFolder, PromptMode::SaveAs);
             return;
         }
+        if (m_promptMode == PromptMode::InsertImage)
+        {
+            OpenImageBrowser();
+            return;
+        }
     }
 
     // Confirm dialogs all share Y/N/Esc semantics — keyboard path delegates to
@@ -1768,6 +1773,7 @@ bool Application::HandleDialogMouseDown(int cellCol, int cellRow)
                 m_insertImageFocus = InsertImageField::Caption; m_needsRedraw = true; break;
             case RetroUi::InsertImageHit::Padding:
                 m_insertImageFocus = InsertImageField::Padding; m_needsRedraw = true; break;
+            case RetroUi::InsertImageHit::Browse:     OpenImageBrowser();            m_needsRedraw = true; break;
             case RetroUi::InsertImageHit::OkHint:     CloseInsertImageDialog(true);  m_needsRedraw = true; break;
             case RetroUi::InsertImageHit::CancelHint: CloseInsertImageDialog(false); m_needsRedraw = true; break;
             default: break;
@@ -3070,10 +3076,30 @@ void Application::OpenFileBrowser(BrowsePurpose purpose, PromptMode returnMode)
     m_needsRedraw = true;
 }
 
+void Application::OpenImageBrowser()
+{
+    // Seed the browser's start directory from the path the user has typed/picked
+    // so far (OpenFileBrowser reads m_dialogDir via DialogDisplayDir, since this
+    // dialog leaves m_promptText empty). Falls back to DefaultBrowseDir otherwise.
+    if (!m_insertImagePathText.empty())
+    {
+        std::error_code ec;
+        std::filesystem::path parent =
+            std::filesystem::path(m_insertImagePathText).parent_path();
+        if (!parent.empty() && std::filesystem::is_directory(parent, ec))
+            m_dialogDir = parent.string();
+    }
+    OpenFileBrowser(BrowsePurpose::OpenFile, PromptMode::InsertImage);
+}
+
 void Application::RefreshBrowseListing()
 {
     const bool dirsOnly = (m_browsePurpose == BrowsePurpose::SaveFolder);
-    m_browseEntries = ListDirectory(m_browseDir, { ".rtf", ".txt" }, dirsOnly);
+    const std::vector<std::string> exts =
+        (m_browseReturnMode == PromptMode::InsertImage)
+            ? std::vector<std::string>{ ".png", ".jpg", ".jpeg", ".bmp", ".gif" }
+            : std::vector<std::string>{ ".rtf", ".txt" };
+    m_browseEntries = ListDirectory(m_browseDir, exts, dirsOnly);
 
     const int n = static_cast<int>(m_browseEntries.size());
     m_browseFocusIdx = std::clamp(m_browseFocusIdx, 0, std::max(0, n - 1));
@@ -3106,7 +3132,18 @@ void Application::BrowseActivate()
     }
 
     // A file row only appears in OpenFile mode (SaveFolder lists dirs only).
-    // Route the chosen path through the normal Open commit path.
+    // Insert Image: fill the picked path back into the dialog's Path field
+    // rather than opening it as a document; everything else routes through the
+    // normal Open commit path.
+    if (m_browseReturnMode == PromptMode::InsertImage)
+    {
+        m_insertImagePathText = JoinPath(m_browseDir, e.name);
+        m_insertImageFocus    = InsertImageField::Path;
+        m_dialogDir           = m_browseDir;   // re-Browse reopens here
+        m_promptMode          = PromptMode::InsertImage;
+        m_needsRedraw         = true;
+        return;
+    }
     m_promptText = JoinPath(m_browseDir, e.name);
     m_promptMode = PromptMode::Open;
     CommitPrompt();

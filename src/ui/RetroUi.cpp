@@ -1484,7 +1484,7 @@ namespace
 {
     constexpr int kInsertImgW = 70;
     constexpr int kInsertImgH = 11;
-    const char* const kInsertImgHint = "[Tab] Next  [Enter] OK  [Esc] Cancel";
+    const char* const kInsertImgHint = "[^B] Browse  [Tab] Next  [Enter] OK  [Esc] Cancel";
     constexpr int kInsertImgPathCol     = 11;
     constexpr int kInsertImgPathWidth   = 55;
     constexpr int kInsertImgPaddingCol  = 11;
@@ -1584,6 +1584,7 @@ RetroUi::InsertImageHit RetroUi::HitTestInsertImageDialog(int cellCol, int cellR
     if (ry == r.h - 2)
     {
         std::string tok = TokenAt(kInsertImgHint, r.x + 2, cellCol);
+        if (tok == "^B")    return InsertImageHit::Browse;
         if (tok == "ENTER") return InsertImageHit::OkHint;
         if (tok == "ESC")   return InsertImageHit::CancelHint;
     }

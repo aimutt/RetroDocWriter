@@ -6,6 +6,12 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 
 ## [Unreleased]
 
+### Added
+- The **Insert > Image…** dialog now has a **Browse** button (or press **Ctrl+B**)
+  that opens the in-app file browser filtered to image files (PNG/JPEG/BMP/GIF).
+  Picking an image fills its full path into the dialog's Path field instead of
+  making you type it.
+
 ### Changed
 - Renamed two Format menu items for clarity: **Text Color…** → **Color Text…**
   and **Highlight Color…** → **Highlight…**.
