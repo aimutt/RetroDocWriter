@@ -150,6 +150,7 @@ void Application::OpenFile(const std::string& path)
         m_viewportTop   = 0;
         m_viewportLeft  = 0;
         m_selection.Clear();
+        ResetWysiwygScrollState();
         m_undoHistory.ClearAll();
         m_undoHistory.MarkSaved();          // loaded buffer == on-disk state
         // Plain-text files frequently contain very long lines (logs, single-
@@ -2017,13 +2018,12 @@ void Application::HandleMouseDown(int cellCol, int cellRow, int px, int py, Uint
             switch (hit.region)
             {
                 case RetroUi::ScrollbarHit::Region::UpButton:
+                    // Scroll only — the caret stays where it is.
                     m_wysiwygScrollPx = std::max(0, m_wysiwygScrollPx - lineH);
-                    UpdateCursorToViewportTop();
                     m_needsRedraw = true;
                     break;
                 case RetroUi::ScrollbarHit::Region::DownButton:
                     m_wysiwygScrollPx = std::min(maxScroll, m_wysiwygScrollPx + lineH);
-                    UpdateCursorToViewportTop();
                     m_needsRedraw = true;
                     break;
                 case RetroUi::ScrollbarHit::Region::Thumb:
@@ -2222,12 +2222,11 @@ void Application::HandleMouseMotion(int cellCol, int cellRow, int px, int py)
                 }
                 break;
             case PromptMode::None:
-                // WYSIWYG document scrollbar drag — cursor follows the
-                // viewport top on every motion frame.
+                // WYSIWYG document scrollbar drag — scroll only; the caret
+                // stays put.
                 if (newScrollTop != m_wysiwygScrollPx)
                 {
                     m_wysiwygScrollPx = newScrollTop;
-                    UpdateCursorToViewportTop();
                     m_needsRedraw     = true;
                 }
                 break;
@@ -2835,6 +2834,7 @@ void Application::NewFile()
     m_viewportTop   = 0;
     m_viewportLeft  = 0;
     m_selection.Clear();
+    ResetWysiwygScrollState();
     m_undoHistory.ClearAll();
     m_undoHistory.MarkSaved();           // empty buffer == "on-disk" state
     m_lastActionWasInsert = false;
@@ -3394,24 +3394,42 @@ int Application::DisplayRowsForLine(int bufRow) const
     return CountWrapRows(m_document->Buffer().Line(bufRow), m_screenColumns);
 }
 
-void Application::UpdateCursorToViewportTop()
+int Application::WysiwygMaxScrollPx() const
 {
-    // Move the cursor to the first buffer row visible at the new viewport
-    // top after a scrollbar action. Collapses any active selection.
-    if (!m_wysiwyg || !m_document) return;
-    WysiwygRenderer::DrawContext ctx = BuildWysiwygDrawContext();
-    ctx.viewportTopPx = m_wysiwygScrollPx;
-    int newRow = m_wysiwyg->RowAtViewportTop(ctx, m_wysiwygScrollPx);
-    int lineCount = m_document->Buffer().Text().LineCount();
-    if (lineCount > 0)
-    {
-        newRow = std::clamp(newRow, 0, lineCount - 1);
-        m_cursor.row    = newRow;
-        m_cursor.column = std::min(m_cursor.column,
-                                   m_document->Buffer().Text().LineLength(newRow));
-    }
-    m_selection.active = false;
-    ClampCursorToLine();
+    // The furthest the document can scroll: total laid-out height minus the
+    // editor area's pixel height. LastTotalDocumentPx() already spans the full
+    // last page, so this lets the scrollbar reach the bottom of that page.
+    const int totalDocPx = m_wysiwyg ? m_wysiwyg->LastTotalDocumentPx() : 0;
+    const int ch         = m_renderer ? m_renderer->CellHeight() : 0;
+    const int editorPxH  = (m_layout.ROW_EDITOR_LAST - m_layout.ROW_EDITOR_FIRST + 1) * ch;
+    return std::max(0, totalDocPx - editorPxH);
+}
+
+bool Application::CaretOrContentChangedSinceLastFrame()
+{
+    // Detect whether the caret moved or the document content changed since the
+    // previous frame. Caret (row,col) is the primary signal — it changes on
+    // every keystroke/arrow/click; the undo version is a backstop for edits
+    // that change layout without moving the caret (alignment, float insert,
+    // undo/redo). Advances the snapshot; call exactly once per frame.
+    const uint32_t ver = m_undoHistory.CurrentVersion();
+    const bool changed = (m_cursor.row    != m_prevCursorRow)
+                      || (m_cursor.column != m_prevCursorCol)
+                      || (ver             != m_prevContentVersion);
+    m_prevCursorRow      = m_cursor.row;
+    m_prevCursorCol      = m_cursor.column;
+    m_prevContentVersion = ver;
+    return changed;
+}
+
+void Application::ResetWysiwygScrollState()
+{
+    // Send the view back to the top and re-seed the change-detection sentinels
+    // so the first frame after an open/new runs one scroll-to-caret.
+    m_wysiwygScrollPx    = 0;
+    m_prevCursorRow      = -1;
+    m_prevCursorCol      = -1;
+    m_prevContentVersion = 0xFFFFFFFFu;
 }
 
 void Application::ScrollViewport()
@@ -5319,8 +5337,15 @@ void Application::Render()
         m_renderer->PaintBuffer(*m_screenBuffer, m_layout.ROW_STATUS);
         WysiwygRenderer::DrawContext ctx = BuildWysiwygDrawContext();
 
-        // Auto-scroll the page so the cursor stays visible.
-        m_wysiwygScrollPx  = m_wysiwyg->ClampScrollForCursor(ctx);
+        // Scroll-to-caret is an event, not a per-frame constraint: only snap
+        // the viewport to the caret when the caret moved or the content changed.
+        // Otherwise the user's free scroll (scrollbar) is left untouched.
+        if (CaretOrContentChangedSinceLastFrame())
+            m_wysiwygScrollPx = m_wysiwyg->ClampScrollForCursor(ctx);
+
+        // Always bound to [0, maxScroll]: lets free scroll reach the bottom of
+        // the last page and prevents overshoot.
+        m_wysiwygScrollPx  = std::clamp(m_wysiwygScrollPx, 0, WysiwygMaxScrollPx());
         ctx.viewportTopPx  = m_wysiwygScrollPx;
 
         // Forward misspelled spans so the proportional renderer can tint

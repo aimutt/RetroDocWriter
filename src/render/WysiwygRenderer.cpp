@@ -966,10 +966,10 @@ int WysiwygRenderer::ClampScrollForCursor(const DrawContext& ctx)
 }
 
 // ---------------------------------------------------------------------------
-// RowAtViewportTop — used by the WYSIWYG scrollbar's "cursor follows scroll"
-// behavior. Walks the same pagination as ClampScrollForCursor / Draw and
-// returns the first buffer row whose document-space top is >= viewportTopPx
-// (i.e., the topmost row that is visible at or below the viewport's top).
+// RowAtViewportTop — read-only query: walks the same pagination as
+// ClampScrollForCursor / Draw and returns the first buffer row whose
+// document-space top is >= viewportTopPx (i.e., the topmost row visible at or
+// below the viewport's top). Reserved for a future page-jump-on-track-click.
 // ---------------------------------------------------------------------------
 
 int WysiwygRenderer::RowAtViewportTop(const DrawContext& ctx, int viewportTopPx)
