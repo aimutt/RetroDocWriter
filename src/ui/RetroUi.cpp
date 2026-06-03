@@ -901,9 +901,9 @@ RetroUi::Rect RetroUi::HelpScreenRect(int screenColumns) const
 
 RetroUi::Rect RetroUi::AboutScreenRect(int screenColumns) const
 {
-    // Mirror DrawAboutScreen constants: 12 lines + 2 chrome rows, innerWidth 38.
-    constexpr int numLines    = 12;
-    constexpr int outerWidth  = 38 + 2;
+    // Mirror DrawAboutScreen constants: 16 lines + 2 chrome rows, innerWidth 55.
+    constexpr int numLines    = 16;
+    constexpr int outerWidth  = 55 + 2;
     constexpr int outerHeight = numLines + 2;
     return CenteredRect(screenColumns, m_layout.SCREEN_ROWS, outerWidth, outerHeight);
 }
@@ -1836,26 +1836,25 @@ void RetroUi::DrawAboutScreen(ScreenBuffer& buffer)
 {
     static const char* aboutLines[] = {
         "",
-        "           RetroDocWriter",
-        "             Version 0.1",
+        "                    RetroDocWriter",
+        "                      Version 0.2",
         "",
-        "  A WYSIWYG document writer with",
-        "  1980s green-phosphor styling,",
-        "  RTF and plain-text I/O, rich",
-        "  formatting, floating images,",
-        "  multi-column text, and rich",
-        "  headers and footers.",
+        "  A WYSIWYG document writer with 1980s retro",
+        "  styling, RTF and plain-text I/O, rich formatting,",
+        "  bullet and numbered lists, floating images,",
+        "  multi-column text, and headers and footers.",
         "",
         "  Built with C++20 and SDL3.",
         "",
+        "  https://www.aimutt.com/projects/retrodocwriter.html",
         "  github.com/aimutt/RetroDocWriter",
         "",
-        "     Press any key to close",
+        "                Press any key to close",
         "",
     };
 
     static const int numLines    = static_cast<int>(sizeof(aboutLines) / sizeof(aboutLines[0]));
-    static const int innerWidth  = 38;
+    static const int innerWidth  = 55;   // wide enough for the full project URL on one line
     static const int outerWidth  = innerWidth + 2;
     static const int outerHeight = numLines + 2; // lines + top/bottom borders
 
