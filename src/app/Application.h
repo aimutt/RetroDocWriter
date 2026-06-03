@@ -280,10 +280,13 @@ private:
     // there's no selection. Recorded as one undo step.
     void SetParagraphAlignment(ParagraphAlign a);
 
-    // Toggle the current paragraph(s) into/out of a bulleted list (Format >
-    // Bulleted List). The first affected row decides the direction. List
-    // nesting is then driven from the keyboard (Tab/Shift+Tab/Backspace).
+    // Toggle the current paragraph(s) into/out of a bulleted or numbered list
+    // (Format > Bulleted/Numbered List). The first affected row decides the
+    // direction; the two share ApplyListToggle. List nesting is then driven
+    // from the keyboard (Tab/Shift+Tab/Backspace).
     void ToggleBulletList();
+    void ToggleNumberedList();
+    void ApplyListToggle(bool numbered);
 
     // Margins dialog
     void OpenMarginsDialog();
@@ -488,6 +491,7 @@ private:
     PrintRequest             m_printRequest;
     std::vector<PlacedSegment> m_printPlaced;        // screen layout shared with the print path
     std::vector<PlacedFloat>   m_printPlacedFloats;  // resolved float rects shared with print
+    std::vector<std::string>   m_printNumberLabels;  // numbered-list marker labels shared with print
     std::vector<std::string> m_printerList;
     int                      m_printPrinterIdx = 0;
     PrintField               m_printFocus      = PrintField::Printer;

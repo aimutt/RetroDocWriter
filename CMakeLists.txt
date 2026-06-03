@@ -168,6 +168,7 @@ add_executable(RetroDocWriterTests
     tests/test_screenbuffer.cpp
     tests/test_dictionary.cpp
     tests/test_listlevel.cpp
+    tests/test_listnumber.cpp
 )
 
 target_link_libraries(RetroDocWriterTests PRIVATE RetroDocCore)

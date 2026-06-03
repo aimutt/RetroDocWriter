@@ -230,34 +230,45 @@ std::string Write(const FormattedTextBuffer& buf,
     // Paragraph alignment is sticky in RTF, so emit the control word only
     // when it changes from one paragraph to the next. Default is \ql (left).
     ParagraphAlign curAlign = ParagraphAlign::Left;
-    // Bulleted-list level is likewise sticky (a legacy \pn block + \li indent
-    // persist until changed or \pard). Emit differentially: entering/deepening
-    // a list re-emits the \li indent + \pn bullet definition; leaving a list
-    // (level 0) emits \pard to clear paragraph numbering + indents, which also
-    // resets alignment — so we force the alignment block below to re-emit.
-    int curListLevel = 0;
+    // List level + kind are likewise sticky (a legacy \pn block + \li indent
+    // persist until changed or \pard). Emit differentially: entering/deepening a
+    // list or switching bullet<->numbered re-emits the \li indent + \pn
+    // definition; leaving a list (level 0) emits \pard to clear paragraph
+    // numbering + indents, which also resets alignment — so we force the
+    // alignment block below to re-emit.
+    int  curListLevel    = 0;
+    bool curListNumbered = false;
     for (int row = 0; row < buf.LineCount(); ++row)
     {
-        // Bulleted-list paragraph properties first (a list-off \pard would
-        // otherwise wipe an alignment we'd already emitted).
-        int wantLvl = buf.ListLevel(row);
-        if (wantLvl != curListLevel)
+        // List paragraph properties first (a list-off \pard would otherwise
+        // wipe an alignment we'd already emitted).
+        int  wantLvl      = buf.ListLevel(row);
+        bool wantNumbered = buf.ListNumbered(row);
+        if (wantLvl != curListLevel || (wantLvl >= 1 && wantNumbered != curListNumbered))
         {
             if (wantLvl >= 1)
             {
-                // \ilvlN is the unambiguous list-level marker our reader keys
-                // on (a plain \li paragraph indent carries no \ilvl, so it is
-                // never mistaken for a bullet). \li = left indent (twips),
-                // \fi-360 = hanging indent for the bullet, then the legacy
-                // paragraph-numbering bullet block so list-aware readers (Word/
-                // WordPad) render a real bullet. {\pntext\tab} is the fallback
-                // bullet text simple readers show; our reader skips it. \'b7 is
-                // the middle-dot bullet glyph.
-                char lb[160];
-                std::snprintf(lb, sizeof(lb),
-                    "\\ilvl%d\\li%d\\fi-360{\\pntext\\tab}"
-                    "{\\*\\pn\\pnlvlblt\\pnindent360{\\pntxtb \\'b7}}",
-                    wantLvl - 1, wantLvl * kListIndentTwips);
+                // \ilvlN is the unambiguous list-level marker our reader keys on
+                // (a plain \li paragraph indent carries no \ilvl, so it is never
+                // mistaken for a list). \li = left indent (twips), \fi-360 =
+                // hanging indent, then the legacy paragraph-numbering block so
+                // list-aware readers (Word/WordPad) render a marker. {\pntext..}
+                // is the fallback text simple readers show; our reader skips it.
+                // Bulleted: \pnlvlblt + middle-dot \'b7. Numbered: \pndec (our
+                // reader detects "numbered" from this) + trailing-period \pntxta.
+                // We regenerate the legal dotted label at render time, so \pndec
+                // only drives other readers' fallback (decimal) display.
+                char lb[200];
+                if (wantNumbered)
+                    std::snprintf(lb, sizeof(lb),
+                        "\\ilvl%d\\li%d\\fi-360{\\pntext\\tab}"
+                        "{\\*\\pn\\pndec\\pnindent360{\\pntxta .}}",
+                        wantLvl - 1, wantLvl * kListIndentTwips);
+                else
+                    std::snprintf(lb, sizeof(lb),
+                        "\\ilvl%d\\li%d\\fi-360{\\pntext\\tab}"
+                        "{\\*\\pn\\pnlvlblt\\pnindent360{\\pntxtb \\'b7}}",
+                        wantLvl - 1, wantLvl * kListIndentTwips);
                 out += lb;
             }
             else
@@ -265,7 +276,8 @@ std::string Write(const FormattedTextBuffer& buf,
                 out += "\\pard ";
                 curAlign = ParagraphAlign::Left;
             }
-            curListLevel = wantLvl;
+            curListLevel    = wantLvl;
+            curListNumbered = wantNumbered;
         }
         // Emit the paragraph alignment at the start of the row's text (before
         // the first char), so the \par that ends this row applies it.

@@ -64,6 +64,12 @@ struct PrintRequest
     // screen. Null = no list bullets.
     const std::vector<uint8_t>* listLevels = nullptr;
 
+    // Optional precomputed numbered-list marker labels parallel to `buffer`
+    // (e.g. "1.", "2.1"), one per row, empty for non-numbered rows. Computed by
+    // the shared ComputeNumberedLabels so the printed numbers match the screen.
+    // Null = no numbered markers.
+    const std::vector<std::string>* listNumberLabels = nullptr;
+
     // Per-document header/footer bands. Each band has three independent
     // sub-slots (left/center/right) drawing custom text, filename, the page
     // number in one of four formats, or today's date. All default to "None"

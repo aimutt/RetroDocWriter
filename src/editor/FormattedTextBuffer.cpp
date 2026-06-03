@@ -40,13 +40,39 @@ void FormattedTextBuffer::SetAlignment(int row, ParagraphAlign a)
 uint8_t FormattedTextBuffer::ListLevel(int row) const
 {
     if (row < 0 || row >= static_cast<int>(m_listLevel.size())) return 0;
+    return m_listLevel[row] & kListLevelMask;
+}
+
+bool FormattedTextBuffer::ListNumbered(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(m_listLevel.size())) return false;
+    return (m_listLevel[row] & kListNumberedFlag) != 0;
+}
+
+uint8_t FormattedTextBuffer::ListRaw(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(m_listLevel.size())) return 0;
     return m_listLevel[row];
 }
 
 void FormattedTextBuffer::SetListLevel(int row, uint8_t level)
 {
     if (row < 0 || row >= static_cast<int>(m_listLevel.size())) return;
-    m_listLevel[row] = level;
+    // Level 0 leaves the list entirely (kind flag cleared too); otherwise keep
+    // whatever kind (bullet/numbered) the row already had.
+    if (level == 0)
+        m_listLevel[row] = 0;
+    else
+        m_listLevel[row] = static_cast<uint8_t>((m_listLevel[row] & kListNumberedFlag)
+                                                | (level & kListLevelMask));
+}
+
+void FormattedTextBuffer::SetListNumbered(int row, bool numbered)
+{
+    if (row < 0 || row >= static_cast<int>(m_listLevel.size())) return;
+    if ((m_listLevel[row] & kListLevelMask) == 0) return;   // not a list row
+    if (numbered) m_listLevel[row] |= kListNumberedFlag;
+    else          m_listLevel[row] = static_cast<uint8_t>(m_listLevel[row] & ~kListNumberedFlag);
 }
 
 CharFormat FormattedTextBuffer::FormatAt(int row, int col) const

@@ -1109,27 +1109,47 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
         const auto& lineChars = chars[ps.li];
         int y = usableTop + ps.yInPage;
 
-        // Bulleted-list marker: draw the level's bullet once per paragraph
-        // (first visual segment), in the gutter one indent step left of the
-        // text run. Mirrors the on-screen renderer: document default font, to
-        // the left, independent of paragraph alignment. The text indent itself
-        // is already baked into ps.xOffset by the shared layout.
+        // List marker: draw once per paragraph (first visual segment), in the
+        // gutter left of the text run. Mirrors the on-screen renderer (document
+        // default font, left of text, independent of alignment). The text indent
+        // is already baked into ps.xOffset by the shared layout. Bulleted rows
+        // draw a per-level glyph; numbered rows draw the computed legal label
+        // right-aligned so wide markers don't clip into the text.
         if (ps.s == 0 && req.listLevels
             && ps.li < static_cast<int>(req.listLevels->size())
-            && (*req.listLevels)[ps.li] >= 1)
+            && ((*req.listLevels)[ps.li] & kListLevelMask) >= 1)
         {
-            int level   = (*req.listLevels)[ps.li];
-            int bulletX = usableLeft + ps.xOffset - twX(kListIndentTwips);
-            wchar_t glyph = static_cast<wchar_t>(ListBulletGlyph(level));
+            const uint8_t raw     = (*req.listLevels)[ps.li];
+            const int     level   = raw & kListLevelMask;
+            const bool    numbered = (raw & kListNumberedFlag) != 0;
+            const int textRunLeft = usableLeft + ps.xOffset;
             SelectObject(hdc, defaultFont);
-            WORD gi = 0;
-            if (GetGlyphIndicesW(hdc, &glyph, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS)
-                    != GDI_ERROR
-                && gi == 0xFFFF)
-                glyph = static_cast<wchar_t>(ListBulletGlyphAscii(level));
             SetTextColor(hdc, RGB(0, 0, 0));
             SetBkMode(hdc, TRANSPARENT);
-            ExtTextOutW(hdc, bulletX, y, 0, nullptr, &glyph, 1, nullptr);
+            if (numbered && req.listNumberLabels
+                && ps.li < static_cast<int>(req.listNumberLabels->size())
+                && !(*req.listNumberLabels)[ps.li].empty())
+            {
+                const std::string& lbl = (*req.listNumberLabels)[ps.li];
+                SIZE sz{};
+                GetTextExtentPoint32A(hdc, lbl.c_str(),
+                                      static_cast<int>(lbl.size()), &sz);
+                int gap = std::max(2, twX(kListIndentTwips) / 4);
+                int nx  = textRunLeft - gap - sz.cx;
+                ExtTextOutA(hdc, nx, y, 0, nullptr, lbl.c_str(),
+                            static_cast<UINT>(lbl.size()), nullptr);
+            }
+            else
+            {
+                int bulletX = textRunLeft - twX(kListIndentTwips);
+                wchar_t glyph = static_cast<wchar_t>(ListBulletGlyph(level));
+                WORD gi = 0;
+                if (GetGlyphIndicesW(hdc, &glyph, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS)
+                        != GDI_ERROR
+                    && gi == 0xFFFF)
+                    glyph = static_cast<wchar_t>(ListBulletGlyphAscii(level));
+                ExtTextOutW(hdc, bulletX, y, 0, nullptr, &glyph, 1, nullptr);
+            }
         }
 
         // Paragraph alignment: shift the segment (Center/Right) and/or widen
