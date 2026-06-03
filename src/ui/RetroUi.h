@@ -310,7 +310,7 @@ public:
     ColumnsHit HitTestColumnsDialog(int cellCol, int cellRow, int screenColumns) const;
     Rect       ColumnsDialogRect   (int screenColumns) const;
 
-    enum class InsertImageHit { None, Path, Caption, Padding, OkHint, CancelHint };
+    enum class InsertImageHit { None, Path, Caption, Padding, Browse, OkHint, CancelHint };
     InsertImageHit HitTestInsertImageDialog(int cellCol, int cellRow, int screenColumns) const;
     Rect           InsertImageDialogRect   (int screenColumns) const;
 

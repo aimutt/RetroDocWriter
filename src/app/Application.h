@@ -153,6 +153,7 @@ private:
     // directory → returns to Save As with the folder prefilled.
     enum class BrowsePurpose { OpenFile, SaveFolder };
     void OpenFileBrowser(BrowsePurpose purpose, PromptMode returnMode);
+    void OpenImageBrowser();  // launch the browser from the Insert Image dialog
     void RefreshBrowseListing();
     void BrowseActivate();    // Enter on the focused row
     void BrowseSaveHere();    // Save mode: choose the current directory
