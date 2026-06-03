@@ -819,6 +819,18 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
             if (ctrl) ToggleUnderline();
             break;
 
+        case SDL_SCANCODE_T:
+            if (ctrl) ToggleStrikethrough();
+            break;
+
+        case SDL_SCANCODE_D:
+            if (ctrl) OpenColorDialog();
+            break;
+
+        case SDL_SCANCODE_H:
+            if (ctrl) OpenHighlightDialog();
+            break;
+
         // --- Paragraph alignment (Format menu shortcuts) ---
         case SDL_SCANCODE_L:
             if (ctrl) SetParagraphAlignment(ParagraphAlign::Left);

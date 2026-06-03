@@ -53,9 +53,9 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "Bold",                "^B"     },   // shortcut column shows On/Off at draw time
             { "Italic",              "^I"     },
             { "Underline",           "^U"     },
-            { "Strikethrough",       ""       },
-            { "Text Color...",       ""       },
-            { "Highlight Color...",  ""       },
+            { "Strikethrough",       "^T"     },
+            { "Color Text...",       "^D"     },
+            { "Highlight...",        "^H"     },
             { "",                    ""       },
             { "Align Left",          "^L"     },
             { "Center",              "^E"     },

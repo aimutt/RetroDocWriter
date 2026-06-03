@@ -6,6 +6,10 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 
 ## [Unreleased]
 
+### Changed
+- Renamed two Format menu items for clarity: **Text Color…** → **Color Text…**
+  and **Highlight Color…** → **Highlight…**.
+
 ### Fixed
 - You can now scroll all the way to the bottom of the last page when a document
   runs a little past a page boundary; the view no longer snaps back before the
@@ -30,6 +34,8 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
   disappearing).
 
 ### Added
+- Keyboard shortcuts for three Format features that previously had none:
+  **Ctrl+T** Strikethrough, **Ctrl+D** Color Text, **Ctrl+H** Highlight.
 - Status bar shows the current font face and point size (e.g. `EB Garamond 12 pt`)
   for the next character to be typed.
 - **Browse button** on the Open and Save As dialogs opens an in-app file/folder
