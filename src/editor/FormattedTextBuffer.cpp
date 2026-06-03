@@ -9,6 +9,7 @@ FormattedTextBuffer::FormattedTextBuffer()
     m_formats.emplace_back();
     m_pageBreakBefore.emplace_back(false);
     m_alignment.emplace_back(static_cast<uint8_t>(ParagraphAlign::Left));
+    m_listLevel.emplace_back(static_cast<uint8_t>(0));
 }
 
 bool FormattedTextBuffer::PageBreakBefore(int row) const
@@ -36,6 +37,18 @@ void FormattedTextBuffer::SetAlignment(int row, ParagraphAlign a)
     m_alignment[row] = static_cast<uint8_t>(a);
 }
 
+uint8_t FormattedTextBuffer::ListLevel(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(m_listLevel.size())) return 0;
+    return m_listLevel[row];
+}
+
+void FormattedTextBuffer::SetListLevel(int row, uint8_t level)
+{
+    if (row < 0 || row >= static_cast<int>(m_listLevel.size())) return;
+    m_listLevel[row] = level;
+}
+
 CharFormat FormattedTextBuffer::FormatAt(int row, int col) const
 {
     if (row < 0 || row >= static_cast<int>(m_formats.size())) return {};
@@ -53,6 +66,8 @@ bool FormattedTextBuffer::HasAnyFormatting() const
         if (b) return true;
     for (uint8_t a : m_alignment)
         if (a != static_cast<uint8_t>(ParagraphAlign::Left)) return true;
+    for (uint8_t l : m_listLevel)
+        if (l != 0) return true;
     if (!m_floats.empty()) return true;
     if (m_columnCount != 1) return true;
     return false;
@@ -89,7 +104,7 @@ void FormattedTextBuffer::CollapseFloatAnchors(int startRow, int endRow)
 void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
                                    std::vector<std::vector<CharFormat>> formats)
 {
-    SetLines(std::move(lines), std::move(formats), {}, {});
+    SetLines(std::move(lines), std::move(formats), {}, {}, {});
 }
 
 void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
@@ -97,7 +112,7 @@ void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
                                    std::vector<bool> pageBreakBefore)
 {
     SetLines(std::move(lines), std::move(formats),
-             std::move(pageBreakBefore), {});
+             std::move(pageBreakBefore), {}, {});
 }
 
 void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
@@ -105,11 +120,21 @@ void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
                                    std::vector<bool> pageBreakBefore,
                                    std::vector<uint8_t> alignment)
 {
+    SetLines(std::move(lines), std::move(formats),
+             std::move(pageBreakBefore), std::move(alignment), {});
+}
+
+void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
+                                   std::vector<std::vector<CharFormat>> formats,
+                                   std::vector<bool> pageBreakBefore,
+                                   std::vector<uint8_t> alignment,
+                                   std::vector<uint8_t> listLevel)
+{
     if (lines.empty())
         lines.emplace_back();
-    // Pad formats, pageBreakBefore, and alignment to match lines exactly.
-    // Size mismatches (truncated sidecar / RTF parser bug) become default
-    // CharFormat / page-break-false / Left-aligned entries.
+    // Pad formats, pageBreakBefore, alignment, and listLevel to match lines
+    // exactly. Size mismatches (truncated sidecar / RTF parser bug) become
+    // default CharFormat / page-break-false / Left-aligned / no-list entries.
     while (formats.size() < lines.size())
         formats.emplace_back();
     formats.resize(lines.size());
@@ -119,11 +144,13 @@ void FormattedTextBuffer::SetLines(std::vector<std::string> lines,
     pageBreakBefore.resize(lines.size(), false);
     alignment.resize(lines.size(),
                      static_cast<uint8_t>(ParagraphAlign::Left));
+    listLevel.resize(lines.size(), static_cast<uint8_t>(0));
 
     m_text.SetLines(std::move(lines));
     m_formats = std::move(formats);
     m_pageBreakBefore = std::move(pageBreakBefore);
     m_alignment = std::move(alignment);
+    m_listLevel = std::move(listLevel);
 }
 
 void FormattedTextBuffer::SetLinesPlain(std::vector<std::string> lines)
@@ -137,6 +164,7 @@ void FormattedTextBuffer::SetLinesPlain(std::vector<std::string> lines)
     m_pageBreakBefore.assign(lines.size(), false);
     m_alignment.assign(lines.size(),
                        static_cast<uint8_t>(ParagraphAlign::Left));
+    m_listLevel.assign(lines.size(), static_cast<uint8_t>(0));
     m_floats.clear();  // plain text carries no floating objects
     m_columnCount       = 1;   // plain text is single-column
     m_columnGutterTwips = 720;
@@ -189,6 +217,8 @@ void FormattedTextBuffer::Backspace(int col, int row)
             m_pageBreakBefore.erase(m_pageBreakBefore.begin() + row);
         if (row < static_cast<int>(m_alignment.size()))
             m_alignment.erase(m_alignment.begin() + row);
+        if (row < static_cast<int>(m_listLevel.size()))
+            m_listLevel.erase(m_listLevel.begin() + row);
         MergeFloatAnchors(row, row - 1);
     }
 }
@@ -214,6 +244,8 @@ void FormattedTextBuffer::DeleteForward(int col, int row)
             m_pageBreakBefore.erase(m_pageBreakBefore.begin() + row + 1);
         if (row + 1 < static_cast<int>(m_alignment.size()))
             m_alignment.erase(m_alignment.begin() + row + 1);
+        if (row + 1 < static_cast<int>(m_listLevel.size()))
+            m_listLevel.erase(m_listLevel.begin() + row + 1);
         MergeFloatAnchors(row + 1, row);
     }
 }
@@ -246,6 +278,15 @@ void FormattedTextBuffer::InsertNewline(int col, int row)
         m_alignment.insert(m_alignment.begin() + row + 1, inherit);
     else
         m_alignment.push_back(inherit);
+    // List level likewise inherits: pressing Enter inside a bullet item leaves
+    // the new paragraph at the same nesting level (a fresh bullet below).
+    uint8_t inheritLvl = (row < static_cast<int>(m_listLevel.size()))
+                         ? m_listLevel[row]
+                         : 0;
+    if (static_cast<int>(m_listLevel.size()) >= row + 1)
+        m_listLevel.insert(m_listLevel.begin() + row + 1, inheritLvl);
+    else
+        m_listLevel.push_back(inheritLvl);
     // A float anchored at `row` stays on the upper half; rows below shift down.
     ShiftAnchorsAtOrAfter(row + 1, 1);
 }
@@ -315,6 +356,12 @@ void FormattedTextBuffer::InsertText(int col, int row, const std::string& text,
                            : static_cast<uint8_t>(ParagraphAlign::Left);
     for (int i = 0; i < newRows; ++i)
         m_alignment.insert(m_alignment.begin() + row + 1, inheritAlign);
+    // New rows inherit the list level of the row the paste started on.
+    uint8_t inheritLvl = (row < static_cast<int>(m_listLevel.size()))
+                         ? m_listLevel[row]
+                         : 0;
+    for (int i = 0; i < newRows; ++i)
+        m_listLevel.insert(m_listLevel.begin() + row + 1, inheritLvl);
     ShiftAnchorsAtOrAfter(row + 1, newRows);
 }
 
@@ -362,6 +409,13 @@ void FormattedTextBuffer::DeleteRange(int startRow, int startCol,
     if (aEraseLo < aEraseHi)
         m_alignment.erase(m_alignment.begin() + aEraseLo,
                           m_alignment.begin() + aEraseHi);
+    // Same slice for list levels: rows startRow+1..endRow vanish; startRow's
+    // own level survives.
+    int lEraseHi = std::min<int>(endRow + 1, static_cast<int>(m_listLevel.size()));
+    int lEraseLo = std::min<int>(startRow + 1, lEraseHi);
+    if (lEraseLo < lEraseHi)
+        m_listLevel.erase(m_listLevel.begin() + lEraseLo,
+                          m_listLevel.begin() + lEraseHi);
     CollapseFloatAnchors(startRow, endRow);
 }
 
@@ -464,4 +518,8 @@ void FormattedTextBuffer::FlattenAllStyles()
 {
     for (auto& row : m_formats)
         std::fill(row.begin(), row.end(), CharFormat{});
+    // Bulleted lists can't survive a plain-text save, so clear them here too:
+    // this keeps the in-memory buffer matching what hits disk and stops the
+    // "save as .txt?" confirm from re-triggering on the next save.
+    std::fill(m_listLevel.begin(), m_listLevel.end(), static_cast<uint8_t>(0));
 }

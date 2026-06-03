@@ -567,12 +567,22 @@ static void BuildLayoutPass(LayoutPass& out,
         const auto& chars = out.chars[li];
         const int nchars = static_cast<int>(chars.size());
 
+        // Bulleted-list indent: a list paragraph shifts its text run right by
+        // one step per nesting level, leaving a gutter for the bullet glyph
+        // (drawn in Draw). Baking the indent into the segment xOffset/width
+        // here means wrap, alignment, hit-test, scroll, and print all honor it
+        // through the shared placement — no separate handling anywhere else.
+        const int listLevel    = fmt ? fmt->ListLevel(li) : 0;
+        const int listIndentPx = (listLevel >= 1) ? tw2px(listLevel * kListIndentTwips) : 0;
+
         if (nchars == 0)
         {
             // Empty paragraph: one zero-length, full-column segment.
             int h = out.defaultLineHeight;
             advanceColumnIfFull(h);
-            out.segments[li].push_back({ 0, 0, h, curPage, yInPage, colLeftOf(curCol), colW });
+            out.segments[li].push_back({ 0, 0, h, curPage, yInPage,
+                                         colLeftOf(curCol) + listIndentPx,
+                                         std::max(1, colW - listIndentPx) });
             yInPage += h;
             out.totalPages = std::max(out.totalPages, curPage + 1);
             continue;
@@ -591,10 +601,14 @@ static void BuildLayoutPass(LayoutPass& out,
             FreeRun(out.floats, curPage, yInPage, provH, cl, cl + colW, xL, xR);
             int availW = xR - xL;
 
-            ChunkResult ck = WrapChunk(chars, col, static_cast<double>(availW),
+            // Apply the list indent to the run before wrapping so long items
+            // wrap with a hanging indent (text aligns under text, not the bullet).
+            const int runX     = xL + listIndentPx;
+            const int runW     = std::max(1, availW - listIndentPx);
+            ChunkResult ck = WrapChunk(chars, col, static_cast<double>(runW),
                                        out.defaultLineHeight);
             out.segments[li].push_back({ col, ck.endExcl, ck.height,
-                                         curPage, yInPage, xL, availW });
+                                         curPage, yInPage, runX, runW });
             yInPage += ck.height;
             out.totalPages = std::max(out.totalPages, curPage + 1);
             col = ck.nextCol;
@@ -1395,6 +1409,23 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
             SegAlign sa = ComputeSegAlign(segContentW, segTrimmedW, segW, align,
                                           s + 1 == segs.size(), segSpaces);
             usableX += sa.xOffset;
+
+            // Bulleted-list marker: draw the level's bullet glyph once per
+            // paragraph (first visual segment only), in the gutter one indent
+            // step left of the text run. Uses the document default font so it
+            // scales with the body; sits at the left regardless of alignment.
+            if (s == 0 && ctx.formatted && defaultCache
+                && ctx.formatted->ListLevel(li) >= 1)
+            {
+                int level   = ctx.formatted->ListLevel(li);
+                int stepPx  = (kListIndentTwips * dpi) / 1440;
+                int bulletX = pageX + mLeft + segs[s].xOffset - stepPx;
+                char32_t glyph = ListBulletGlyph(level);
+                if (!defaultCache->HasGlyph(glyph))
+                    glyph = ListBulletGlyphAscii(level);
+                defaultCache->DrawGlyphAt(glyph, bulletX, textY,
+                                          m_theme.normalText, 0);
+            }
 
             // Sub-pixel positioning: accumulate each character's sub-pixel
             // advance as a double, then round to the nearest integer pixel

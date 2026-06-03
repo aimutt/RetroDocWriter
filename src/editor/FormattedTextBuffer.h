@@ -47,6 +47,13 @@ public:
     ParagraphAlign     Alignment(int row)           const;
     void               SetAlignment(int row, ParagraphAlign a);
     const std::vector<uint8_t>& Alignments()        const { return m_alignment; }
+    // Per-row (per-paragraph) bulleted-list nesting level. 0 = not a list item,
+    // 1 = top-level bullet, 2 = sub-bullet, etc. Read by the WYSIWYG renderer +
+    // Print.cpp to indent the text and draw a per-level bullet glyph, and
+    // round-tripped through RTF (\li + \pn\pnlvlblt) by RtfReader/RtfWriter.
+    uint8_t            ListLevel(int row)           const;
+    void               SetListLevel(int row, uint8_t level);
+    const std::vector<uint8_t>& ListLevels()        const { return m_listLevel; }
 
     // Floating shapes/images, anchored to buffer rows. The vector is replaced
     // wholesale by the RTF reader / undo (SetFloats); the mutators below only
@@ -92,6 +99,14 @@ public:
                   std::vector<std::vector<CharFormat>> formats,
                   std::vector<bool> pageBreakBefore,
                   std::vector<uint8_t> alignment);
+    // Widest overload: also restores the per-row bulleted-list level vector.
+    // Used by the RTF reader and undo/redo to round-trip list nesting. Each
+    // entry is a list level (0 = none); an empty/short vector pads with 0.
+    void SetLines(std::vector<std::string> lines,
+                  std::vector<std::vector<CharFormat>> formats,
+                  std::vector<bool> pageBreakBefore,
+                  std::vector<uint8_t> alignment,
+                  std::vector<uint8_t> listLevel);
     // Convenience: replace text and reset every character's format to
     // default (style=0, face=Inherit, size=Inherit).
     void SetLinesPlain(std::vector<std::string> lines);
@@ -158,6 +173,9 @@ private:
     // Parallel to m_pageBreakBefore: one ParagraphAlign (as uint8_t) per row.
     // Kept line-count-aligned in every mutator alongside m_pageBreakBefore.
     std::vector<uint8_t>                    m_alignment;
+    // Parallel to m_alignment: bulleted-list nesting level per row (0 = none).
+    // Kept line-count-aligned in every mutator alongside m_alignment.
+    std::vector<uint8_t>                    m_listLevel;
     // Sparse list of floating objects keyed by anchorRow (not a per-row
     // parallel vector). Mutators adjust anchorRow on row insert/join/delete.
     std::vector<FloatObject>                m_floats;

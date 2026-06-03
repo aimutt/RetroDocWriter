@@ -132,6 +132,12 @@ int GlyphCache::GlyphAdvance(char32_t codepoint, int styleBits) const
     return m_cellWidth; // safe fallback (monospace assumption)
 }
 
+bool GlyphCache::HasGlyph(char32_t codepoint) const
+{
+    if (!m_font) return false;
+    return TTF_FontHasGlyph(m_font, static_cast<Uint32>(codepoint));
+}
+
 void GlyphCache::DrawGlyphAt(char32_t codepoint, int x, int y, Color tint, int styleBits)
 {
     if (!m_font) return;

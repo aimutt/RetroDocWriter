@@ -58,6 +58,12 @@ struct PrintRequest
     // every paragraph left-aligned.
     const std::vector<uint8_t>* alignment = nullptr;
 
+    // Optional per-row bulleted-list level (0 = none) parallel to `buffer`.
+    // The text indent is already baked into placedSegments; this is used only
+    // to draw the per-level bullet glyph in the gutter so print matches the
+    // screen. Null = no list bullets.
+    const std::vector<uint8_t>* listLevels = nullptr;
+
     // Per-document header/footer bands. Each band has three independent
     // sub-slots (left/center/right) drawing custom text, filename, the page
     // number in one of four formats, or today's date. All default to "None"

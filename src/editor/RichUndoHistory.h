@@ -17,6 +17,7 @@ struct RichUndoState
     std::vector<std::vector<CharFormat>>      formats;
     std::vector<bool>                         pageBreaks;
     std::vector<uint8_t>                      alignment;   // ParagraphAlign per row
+    std::vector<uint8_t>                      listLevels;  // bullet level per row (0=none)
     std::vector<FloatObject>                  floats;      // anchored shapes/images
     int cursorRow = 0;
     int cursorCol = 0;

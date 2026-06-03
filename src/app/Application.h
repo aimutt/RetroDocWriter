@@ -280,6 +280,11 @@ private:
     // there's no selection. Recorded as one undo step.
     void SetParagraphAlignment(ParagraphAlign a);
 
+    // Toggle the current paragraph(s) into/out of a bulleted list (Format >
+    // Bulleted List). The first affected row decides the direction. List
+    // nesting is then driven from the keyboard (Tab/Shift+Tab/Backspace).
+    void ToggleBulletList();
+
     // Margins dialog
     void OpenMarginsDialog();
     void CloseMarginsDialog(bool commit);
