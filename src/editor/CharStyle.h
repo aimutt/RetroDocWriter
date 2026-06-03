@@ -29,6 +29,33 @@ enum class ParagraphAlign : uint8_t
     Justify = 3,
 };
 
+// Bulleted-list layout constants, shared by the editor, the WYSIWYG
+// renderer, the GDI print path, and the RTF reader/writer so the on-screen
+// indent, the printed indent, and the round-tripped \li values all agree.
+//   * kListIndentTwips — left indent added per nesting level (0.25").
+//   * kMaxListLevel    — deepest level Tab can reach (bullet shapes cycle
+//                        every 3 levels, so this caps the UI at a sane depth).
+inline constexpr int kListIndentTwips = 360;   // 0.25" per level
+inline constexpr int kMaxListLevel    = 6;
+
+// Bullet glyph codepoint for a 1-based list level. Shapes cycle by depth:
+// level 1 = • (U+2022), level 2 = ◦ (U+25E6), level 3 = ▪ (U+25AA), repeat.
+inline char32_t ListBulletGlyph(int level)
+{
+    static const char32_t kBullets[3] = { U'•', U'◦', U'▪' };
+    if (level < 1) level = 1;
+    return kBullets[(level - 1) % 3];
+}
+
+// ASCII fallback bullet for fonts that lack the preferred shape: * / o / -
+// per cycling depth. Same cycle order as ListBulletGlyph.
+inline char32_t ListBulletGlyphAscii(int level)
+{
+    static const char32_t kFallback[3] = { U'*', U'o', U'-' };
+    if (level < 1) level = 1;
+    return kFallback[(level - 1) % 3];
+}
+
 // Per-character formatting record: one byte each for style bits, font
 // face override, and font size override. Stored in FormattedTextBuffer's
 // parallel m_formats vector — exactly one CharFormat per character byte

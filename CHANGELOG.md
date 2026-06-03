@@ -7,6 +7,13 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 ## [Unreleased]
 
 ### Added
+- **Bulleted lists** (**Format > Bulleted List**) with multi-level sub-bullets
+  that change shape by depth (• ◦ ▪, cycling). Turn the current paragraph(s)
+  into a list from the menu, then build it from the keyboard: **Enter** starts
+  the next item, **Tab** at the start of an item makes it a sub-bullet (indent),
+  **Shift+Tab** un-indents, and **Backspace** at the start of an item un-indents
+  one level — a final Backspace on a top-level bullet leaves the list. Lists
+  render and print with a hanging indent and round-trip through RTF.
 - The **Insert > Image…** dialog now has a **Browse** button (or press **Ctrl+B**)
   that opens the in-app file browser filtered to image files (PNG/JPEG/BMP/GIF).
   Picking an image fills its full path into the dialog's Path field instead of

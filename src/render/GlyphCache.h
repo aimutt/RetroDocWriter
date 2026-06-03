@@ -47,6 +47,11 @@ public:
     // rendering — caller has already computed x via summed glyph advances.
     void DrawGlyphAt(char32_t codepoint, int x, int y, Color tint, int styleBits = 0);
 
+    // True if this font actually provides a glyph for the codepoint (vs.
+    // rendering the .notdef box). Used to pick an ASCII fallback for bullet
+    // shapes a given face may lack.
+    bool HasGlyph(char32_t codepoint) const;
+
 private:
     SDL_Texture* GlyphTexture(char32_t codepoint, int styleBits,
                               int& outWidth, int& outHeight);

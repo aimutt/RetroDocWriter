@@ -86,6 +86,13 @@ namespace
         uint8_t curAlignment = static_cast<uint8_t>(ParagraphAlign::Left);
         std::vector<uint8_t> lineAlignment;
 
+        // Bulleted-list level. \ilvlN (0-based) marks a list item → level N+1;
+        // \pard clears it. Sticky like alignment, so a new paragraph inherits
+        // the current value. lineListLevel mirrors `lines`. Keyed on \ilvl (not
+        // \li) so a plain indented paragraph is never mistaken for a bullet.
+        uint8_t curListLevel = 0;
+        std::vector<uint8_t> lineListLevel;
+
         // Whole-document columns (\cols / \colsx). Last value seen wins.
         int docCols       = 1;
         int docColsGutter = 720;
@@ -109,6 +116,7 @@ namespace
             formatRows.emplace_back();
             pageBreakBefore.push_back(false);
             lineAlignment.push_back(static_cast<uint8_t>(ParagraphAlign::Left));
+            lineListLevel.push_back(0);
         }
 
         // Route a literal byte while inside a shape: pict hex (only at the
@@ -203,8 +211,9 @@ namespace
                 formatRows.emplace_back();
                 pageBreakBefore.push_back(pendingPageBreak);
                 pendingPageBreak = false;
-                // New paragraph inherits the current (sticky) alignment.
+                // New paragraph inherits the current (sticky) alignment + list.
                 lineAlignment.push_back(curAlignment);
+                lineListLevel.push_back(curListLevel);
             }
             else if (b == '\r' || b == 0)
             {
@@ -262,7 +271,7 @@ namespace
             // Note: \colortbl is NOT in this list — it's handled specially
             // so the parser can capture \red\green\blue triples instead of
             // dropping the contents.
-            return w == "fonttbl" || w == "filetbl"
+            return w == "fonttbl" || w == "filetbl" || w == "pntext"
                 || w == "stylesheet" || w == "listtable" || w == "rsidtbl"
                 || w == "info" || w == "pict" || w == "header" || w == "footer"
                 || w == "headerl" || w == "headerr" || w == "footerl" || w == "footerr"
@@ -394,9 +403,23 @@ namespace
             if (word == "qc")   { setAlign(ParagraphAlign::Center);  return; }
             if (word == "qr")   { setAlign(ParagraphAlign::Right);   return; }
             if (word == "qj")   { setAlign(ParagraphAlign::Justify); return; }
+
+            // Bulleted-list level. \ilvlN (0-based) → our 1-based level N+1,
+            // clamped to the editor's max. Applies to the current line; sticky
+            // until \pard. \li is intentionally ignored for level detection.
+            auto setListLevel = [&](int lvl) {
+                if (skipping()) return;
+                if (lvl < 0) lvl = 0;
+                if (lvl > kMaxListLevel) lvl = kMaxListLevel;
+                curListLevel = static_cast<uint8_t>(lvl);
+                if (!lineListLevel.empty()) lineListLevel.back() = curListLevel;
+            };
+            if (word == "ilvl") { setListLevel(hasParam ? param + 1 : 1); return; }
+
             // \pard resets paragraph properties to their defaults (alignment
-            // back to Left). Character props are unaffected (that's \plain).
-            if (word == "pard") { setAlign(ParagraphAlign::Left);    return; }
+            // back to Left, list cleared). Character props are unaffected
+            // (that's \plain).
+            if (word == "pard") { setAlign(ParagraphAlign::Left); setListLevel(0); return; }
 
             if (word == "deff" && hasParam)
             {
@@ -684,11 +707,14 @@ namespace
                 formatRows.pop_back();
                 if (!pageBreakBefore.empty()) pageBreakBefore.pop_back();
                 if (!lineAlignment.empty()) lineAlignment.pop_back();
+                if (!lineListLevel.empty()) lineListLevel.pop_back();
             }
-            // Make pageBreakBefore + lineAlignment exactly line-count sized.
+            // Make pageBreakBefore + lineAlignment + lineListLevel exactly
+            // line-count sized.
             pageBreakBefore.resize(lines.size(), false);
             lineAlignment.resize(lines.size(),
                                  static_cast<uint8_t>(ParagraphAlign::Left));
+            lineListLevel.resize(lines.size(), 0);
             // Clamp shape anchors into range (a popped trailing line could
             // leave an anchor one past the end), then install them. Always
             // SetFloats — even when empty — so stale shapes from a prior load
@@ -697,7 +723,8 @@ namespace
             for (auto& f : floats)
                 if (f.anchorRow > lastRow) f.anchorRow = lastRow;
             out.SetLines(std::move(lines), std::move(formatRows),
-                         std::move(pageBreakBefore), std::move(lineAlignment));
+                         std::move(pageBreakBefore), std::move(lineAlignment),
+                         std::move(lineListLevel));
             out.SetFloats(std::move(floats));
             out.SetColumns(docCols, docColsGutter);
         }

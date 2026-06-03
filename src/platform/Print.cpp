@@ -1109,6 +1109,29 @@ static std::string PrintDocumentFormatted(const TextBuffer& buffer,
         const auto& lineChars = chars[ps.li];
         int y = usableTop + ps.yInPage;
 
+        // Bulleted-list marker: draw the level's bullet once per paragraph
+        // (first visual segment), in the gutter one indent step left of the
+        // text run. Mirrors the on-screen renderer: document default font, to
+        // the left, independent of paragraph alignment. The text indent itself
+        // is already baked into ps.xOffset by the shared layout.
+        if (ps.s == 0 && req.listLevels
+            && ps.li < static_cast<int>(req.listLevels->size())
+            && (*req.listLevels)[ps.li] >= 1)
+        {
+            int level   = (*req.listLevels)[ps.li];
+            int bulletX = usableLeft + ps.xOffset - twX(kListIndentTwips);
+            wchar_t glyph = static_cast<wchar_t>(ListBulletGlyph(level));
+            SelectObject(hdc, defaultFont);
+            WORD gi = 0;
+            if (GetGlyphIndicesW(hdc, &glyph, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS)
+                    != GDI_ERROR
+                && gi == 0xFFFF)
+                glyph = static_cast<wchar_t>(ListBulletGlyphAscii(level));
+            SetTextColor(hdc, RGB(0, 0, 0));
+            SetBkMode(hdc, TRANSPARENT);
+            ExtTextOutW(hdc, bulletX, y, 0, nullptr, &glyph, 1, nullptr);
+        }
+
         // Paragraph alignment: shift the segment (Center/Right) and/or widen
         // its spaces (Justify), mirroring WysiwygRenderer so print matches
         // the on-screen layout.

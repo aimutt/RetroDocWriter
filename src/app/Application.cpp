@@ -654,6 +654,27 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
 
         case SDL_SCANCODE_TAB:
         {
+            // In a bulleted list, Tab at the start of an item changes the
+            // nesting level instead of inserting spaces: Tab → sub-bullet
+            // (indent), Shift+Tab → outdent (but not below level 1; use
+            // Backspace to leave the list entirely).
+            {
+                uint8_t lvl = m_document->Buffer().ListLevel(m_cursor.row);
+                if (lvl >= 1 && m_cursor.column == 0)
+                {
+                    PushUndoBeforeEdit();
+                    if (!shift)
+                        m_document->Buffer().SetListLevel(
+                            m_cursor.row,
+                            static_cast<uint8_t>(std::min<int>(lvl + 1, kMaxListLevel)));
+                    else if (lvl > 1)
+                        m_document->Buffer().SetListLevel(m_cursor.row,
+                                                          static_cast<uint8_t>(lvl - 1));
+                    m_document->MarkDirty();
+                    UpdateWindowTitle();
+                    break;
+                }
+            }
             PushUndoBeforeEdit();
             if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
                 EraseSelection();
@@ -691,6 +712,19 @@ void Application::HandleKeyDown(const SDL_KeyboardEvent& key)
                     m_cursor.row, static_cast<int>(leadOffset),
                     m_cursor.row, m_cursor.column);
                 m_cursor.column = static_cast<int>(leadOffset);
+                m_document->MarkDirty();
+                UpdateWindowTitle();
+            }
+            else if (m_document->Buffer().ListLevel(m_cursor.row) >= 1)
+            {
+                // At the start of a bulleted-list item, Backspace outdents one
+                // level rather than merging with the previous line. Level 1 → 0
+                // leaves the list (becomes a normal paragraph); a further
+                // Backspace then falls through to the normal merge below.
+                PushUndoBeforeEdit();
+                uint8_t lvl = m_document->Buffer().ListLevel(m_cursor.row);
+                m_document->Buffer().SetListLevel(m_cursor.row,
+                                                  static_cast<uint8_t>(lvl - 1));
                 m_document->MarkDirty();
                 UpdateWindowTitle();
             }
@@ -2665,7 +2699,7 @@ void Application::EnsureUndoBeforeInsert()
 
 void Application::ApplyUndoState(const RichUndoState& s)
 {
-    m_document->Buffer().SetLines(s.lines, s.formats, s.pageBreaks, s.alignment);
+    m_document->Buffer().SetLines(s.lines, s.formats, s.pageBreaks, s.alignment, s.listLevels);
     m_document->Buffer().SetFloats(s.floats);
     m_cursor.row    = s.cursorRow;
     m_cursor.column = s.cursorCol;
@@ -3352,7 +3386,9 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
                 case 9:  SetParagraphAlignment(ParagraphAlign::Right);   break;
                 case 10: SetParagraphAlignment(ParagraphAlign::Justify); break;
                 // 11 = separator
-                case 12: InsertPageBreak();     break;
+                case 12: ToggleBulletList();    break;
+                // 13 = separator
+                case 14: InsertPageBreak();     break;
                 default: break;
             }
             break;
@@ -4274,6 +4310,7 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.formats         = &m_document->Buffer().Formats();
     m_printRequest.pageBreakBefore = &m_document->Buffer().PageBreaks();
     m_printRequest.alignment       = &m_document->Buffer().Alignments();
+    m_printRequest.listLevels      = &m_document->Buffer().ListLevels();
     m_printRequest.header               = m_header;
     m_printRequest.footer               = m_footer;
     m_printRequest.floats               = &m_document->Buffer().Floats();
@@ -4495,6 +4532,34 @@ void Application::SetParagraphAlignment(ParagraphAlign a)
         case ParagraphAlign::Justify: name = "Justified";break;
     }
     m_statusMessage = std::string("Alignment: ") + name;
+}
+
+void Application::ToggleBulletList()
+{
+    // Span of paragraphs to toggle: the selection's rows, or just the cursor's
+    // row when there's no active selection. Bulleted-list level is a paragraph
+    // property, like alignment. The first row decides the direction: if it is
+    // not yet a list item, turn the whole span into top-level bullets; else
+    // clear list formatting across the span.
+    int firstRow = m_cursor.row;
+    int lastRow  = m_cursor.row;
+    if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
+    {
+        int sr, sc, er, ec;
+        m_selection.GetRange(m_cursor.row, m_cursor.column, sr, sc, er, ec);
+        firstRow = sr;
+        lastRow  = er;
+    }
+
+    bool turnOn = m_document->Buffer().ListLevel(firstRow) == 0;
+    PushUndoBeforeEdit();
+    for (int row = firstRow; row <= lastRow; ++row)
+        m_document->Buffer().SetListLevel(row, turnOn ? 1 : 0);
+    m_document->MarkDirty();
+    UpdateWindowTitle();
+    m_lastActionWasInsert = false;
+
+    m_statusMessage = turnOn ? "Bulleted List: On" : "Bulleted List: Off";
 }
 
 // ---------------------------------------------------------------------------

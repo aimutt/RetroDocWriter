@@ -62,6 +62,8 @@ inline const std::vector<MenuDef>& GetMenuDefs()
             { "Align Right",         "^R"     },
             { "Justify",             "^J"     },
             { "",                    ""       },
+            { "Bulleted List",       ""       },   // toggles the current paragraph(s) into/out of a bulleted list
+            { "",                    ""       },
             { "Insert Page Break",   "^Enter" },
         }},
         { "Search", 21, {
