@@ -2,6 +2,7 @@
 #include "render/GlyphCache.h"
 #include "render/FontSettings.h"
 #include "editor/CharStyle.h"
+#include "editor/ListNumber.h"
 #include "editor/Palette.h"
 #include "editor/TextBuffer.h"
 #include "editor/FormattedTextBuffer.h"
@@ -1169,6 +1170,11 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
     GlyphCache* defaultCache = CacheFor(ctx.face, ctx.pointSize, dpi);
     if (!defaultCache || !defaultCache->IsValid()) return;
 
+    // Numbered-list marker labels (legal multilevel "1." / "2.1" / "2.2.1"),
+    // computed once over the whole buffer. Empty string for non-numbered rows.
+    std::vector<std::string> numberLabels;
+    if (ctx.formatted) numberLabels = ComputeNumberedLabels(*ctx.formatted);
+
     LayoutPass pass;
     LayoutGeom geom{ dpi, usableW, usableH, mTop, mLeft,
                      ctx.columnCount, (ctx.columnGutterTwips * dpi) / 1440 };
@@ -1410,21 +1416,48 @@ void WysiwygRenderer::Draw(const DrawContext& ctx)
                                           s + 1 == segs.size(), segSpaces);
             usableX += sa.xOffset;
 
-            // Bulleted-list marker: draw the level's bullet glyph once per
-            // paragraph (first visual segment only), in the gutter one indent
-            // step left of the text run. Uses the document default font so it
-            // scales with the body; sits at the left regardless of alignment.
+            // List marker: drawn once per paragraph (first visual segment only),
+            // in the gutter left of the text run, using the document default
+            // font so it scales with the body and sits at the left regardless of
+            // alignment. Bulleted rows draw a per-level glyph; numbered rows draw
+            // the computed legal label right-aligned so wide markers (2.2.1, 10.)
+            // don't clip into the text.
             if (s == 0 && ctx.formatted && defaultCache
                 && ctx.formatted->ListLevel(li) >= 1)
             {
-                int level   = ctx.formatted->ListLevel(li);
-                int stepPx  = (kListIndentTwips * dpi) / 1440;
-                int bulletX = pageX + mLeft + segs[s].xOffset - stepPx;
-                char32_t glyph = ListBulletGlyph(level);
-                if (!defaultCache->HasGlyph(glyph))
-                    glyph = ListBulletGlyphAscii(level);
-                defaultCache->DrawGlyphAt(glyph, bulletX, textY,
-                                          m_theme.normalText, 0);
+                int level       = ctx.formatted->ListLevel(li);
+                int stepPx      = (kListIndentTwips * dpi) / 1440;
+                int textRunLeft = pageX + mLeft + segs[s].xOffset;
+                if (ctx.formatted->ListNumbered(li))
+                {
+                    const std::string& lbl =
+                        (li < static_cast<int>(numberLabels.size()))
+                        ? numberLabels[static_cast<size_t>(li)] : std::string();
+                    if (!lbl.empty())
+                    {
+                        int gap = std::max(2, stepPx / 4);
+                        int w = 0;
+                        for (char ch : lbl)
+                            w += defaultCache->GlyphAdvance(
+                                static_cast<char32_t>(static_cast<unsigned char>(ch)), 0);
+                        int nx = textRunLeft - gap - w;
+                        for (char ch : lbl)
+                        {
+                            char32_t cp = static_cast<char32_t>(static_cast<unsigned char>(ch));
+                            defaultCache->DrawGlyphAt(cp, nx, textY, m_theme.normalText, 0);
+                            nx += defaultCache->GlyphAdvance(cp, 0);
+                        }
+                    }
+                }
+                else
+                {
+                    int bulletX = textRunLeft - stepPx;
+                    char32_t glyph = ListBulletGlyph(level);
+                    if (!defaultCache->HasGlyph(glyph))
+                        glyph = ListBulletGlyphAscii(level);
+                    defaultCache->DrawGlyphAt(glyph, bulletX, textY,
+                                              m_theme.normalText, 0);
+                }
             }
 
             // Sub-pixel positioning: accumulate each character's sub-pixel

@@ -86,12 +86,27 @@ namespace
         uint8_t curAlignment = static_cast<uint8_t>(ParagraphAlign::Left);
         std::vector<uint8_t> lineAlignment;
 
-        // Bulleted-list level. \ilvlN (0-based) marks a list item → level N+1;
-        // \pard clears it. Sticky like alignment, so a new paragraph inherits
-        // the current value. lineListLevel mirrors `lines`. Keyed on \ilvl (not
-        // \li) so a plain indented paragraph is never mistaken for a bullet.
-        uint8_t curListLevel = 0;
+        // List state. \ilvlN (0-based) marks a list item → level N+1; the \pn
+        // number-type keyword inside {\*\pn…} tells bullet (\pnlvlblt) from
+        // numbered (\pndec/…). \pard clears both. Sticky like alignment, so a
+        // new paragraph inherits the current values. lineListLevel mirrors
+        // `lines` and stores the packed byte (level | kListNumberedFlag). Keyed
+        // on \ilvl (not \li) so a plain indented paragraph is never a list.
+        uint8_t curListLevel    = 0;
+        bool    curListNumbered = false;
         std::vector<uint8_t> lineListLevel;
+        // Brace depth where the current {\*\pn …} numbering group opened (0 = not
+        // inside one). The \pn number-type keywords are only honored while inside
+        // it, so a \pndec sitting in a skipped \listtable can't mark a paragraph
+        // numbered.
+        int pnFromDepth = 0;
+        // Packed byte for the current list state (0 when not a list).
+        uint8_t PackedList() const
+        {
+            if (curListLevel == 0) return 0;
+            return static_cast<uint8_t>(curListLevel
+                   | (curListNumbered ? kListNumberedFlag : 0));
+        }
 
         // Whole-document columns (\cols / \colsx). Last value seen wins.
         int docCols       = 1;
@@ -213,7 +228,7 @@ namespace
                 pendingPageBreak = false;
                 // New paragraph inherits the current (sticky) alignment + list.
                 lineAlignment.push_back(curAlignment);
-                lineListLevel.push_back(curListLevel);
+                lineListLevel.push_back(PackedList());
             }
             else if (b == '\r' || b == 0)
             {
@@ -412,14 +427,37 @@ namespace
                 if (lvl < 0) lvl = 0;
                 if (lvl > kMaxListLevel) lvl = kMaxListLevel;
                 curListLevel = static_cast<uint8_t>(lvl);
-                if (!lineListLevel.empty()) lineListLevel.back() = curListLevel;
+                if (!lineListLevel.empty()) lineListLevel.back() = PackedList();
             };
             if (word == "ilvl") { setListLevel(hasParam ? param + 1 : 1); return; }
+
+            // List *kind* from the {\*\pn …} numbering block. These keywords live
+            // inside a skipped \* destination, so they are NOT gated on
+            // skipping() — but they are honored only while inside the \pn group
+            // (pnFromDepth) so a \listtable's keywords can't leak in. \pn opens
+            // the group; \pnlvlblt = bulleted, the number-format keywords =
+            // numbered.
+            if (word == "pn") { pnFromDepth = braceDepth; return; }
+            auto setListKind = [&](bool numbered) {
+                if (pnFromDepth == 0) return;
+                curListNumbered = numbered;
+                if (!lineListLevel.empty()) lineListLevel.back() = PackedList();
+            };
+            if (word == "pnlvlblt") { setListKind(false); return; }
+            if (word == "pndec"    || word == "pnlcltr" || word == "pnlcrm"
+             || word == "pnucltr"  || word == "pnucrm"  || word == "pnord"
+             || word == "pncard"   || word == "pnlvlbody") { setListKind(true); return; }
 
             // \pard resets paragraph properties to their defaults (alignment
             // back to Left, list cleared). Character props are unaffected
             // (that's \plain).
-            if (word == "pard") { setAlign(ParagraphAlign::Left); setListLevel(0); return; }
+            if (word == "pard")
+            {
+                setAlign(ParagraphAlign::Left);
+                curListNumbered = false;
+                setListLevel(0);
+                return;
+            }
 
             if (word == "deff" && hasParam)
             {
@@ -596,6 +634,8 @@ namespace
             {
                 if (skipFromDepth > 0 && braceDepth == skipFromDepth)
                     skipFromDepth = 0;
+                if (pnFromDepth > 0 && braceDepth == pnFromDepth)
+                    pnFromDepth = 0;
                 if (fontTblOpenDepth > 0 && braceDepth == fontTblOpenDepth)
                     fontTblOpenDepth = 0;
                 if (colorTblOpenDepth > 0 && braceDepth == colorTblOpenDepth)

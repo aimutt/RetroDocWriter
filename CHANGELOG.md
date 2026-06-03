@@ -14,6 +14,13 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
   **Shift+Tab** un-indents, and **Backspace** at the start of an item un-indents
   one level — a final Backspace on a top-level bullet leaves the list. Lists
   render and print with a hanging indent and round-trip through RTF.
+- **Numbered lists** (**Format > Numbered List**) using legal/multilevel
+  numbering (`1.`, `2.`, then `2.1`, `2.2`, then `2.2.1`). Same keyboard nesting
+  as bulleted lists (Enter/Tab/Shift+Tab/Backspace); numbers renumber
+  automatically as you add, indent, or remove items, and a normal paragraph
+  restarts numbering. Toggling Bulleted vs Numbered on a paragraph switches it
+  between the two. Renders and prints with a hanging indent and round-trips
+  through RTF.
 - The **Insert > Image…** dialog now has a **Browse** button (or press **Ctrl+B**)
   that opens the in-app file browser filtered to image files (PNG/JPEG/BMP/GIF).
   Picking an image fills its full path into the dialog's Path field instead of

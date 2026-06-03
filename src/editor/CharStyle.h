@@ -38,6 +38,14 @@ enum class ParagraphAlign : uint8_t
 inline constexpr int kListIndentTwips = 360;   // 0.25" per level
 inline constexpr int kMaxListLevel    = 6;
 
+// A list paragraph's per-row state is packed into one byte (see
+// FormattedTextBuffer::m_listLevel): the low bits hold the nesting level
+// (0 = not a list, 1..kMaxListLevel), and kListNumberedFlag marks the item as
+// a numbered list item rather than a bulleted one. Stored together so every
+// text mutator carries the kind along with the level for free.
+inline constexpr uint8_t kListLevelMask    = 0x3F;
+inline constexpr uint8_t kListNumberedFlag = 0x40;
+
 // Bullet glyph codepoint for a 1-based list level. Shapes cycle by depth:
 // level 1 = • (U+2022), level 2 = ◦ (U+25E6), level 3 = ▪ (U+25AA), repeat.
 inline char32_t ListBulletGlyph(int level)

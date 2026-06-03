@@ -47,12 +47,20 @@ public:
     ParagraphAlign     Alignment(int row)           const;
     void               SetAlignment(int row, ParagraphAlign a);
     const std::vector<uint8_t>& Alignments()        const { return m_alignment; }
-    // Per-row (per-paragraph) bulleted-list nesting level. 0 = not a list item,
-    // 1 = top-level bullet, 2 = sub-bullet, etc. Read by the WYSIWYG renderer +
-    // Print.cpp to indent the text and draw a per-level bullet glyph, and
-    // round-tripped through RTF (\li + \pn\pnlvlblt) by RtfReader/RtfWriter.
+    // Per-row (per-paragraph) list state. The stored byte packs the nesting
+    // level (low bits, 0 = not a list, 1 = top level, 2 = sub-item, …) with a
+    // numbered-vs-bulleted flag (kListNumberedFlag). Read by the WYSIWYG
+    // renderer + Print.cpp to indent the text and draw a per-level bullet glyph
+    // or computed number, and round-tripped through RTF (\ilvl + \pn) by
+    // RtfReader/RtfWriter.
+    //   ListLevel  — masked nesting level (kind flag stripped).
+    //   ListNumbered — true if this row is a numbered (vs bulleted) list item.
+    //   ListRaw    — the packed byte (level | flag); used by undo snapshots.
     uint8_t            ListLevel(int row)           const;
+    bool               ListNumbered(int row)        const;
+    uint8_t            ListRaw(int row)             const;
     void               SetListLevel(int row, uint8_t level);
+    void               SetListNumbered(int row, bool numbered);
     const std::vector<uint8_t>& ListLevels()        const { return m_listLevel; }
 
     // Floating shapes/images, anchored to buffer rows. The vector is replaced

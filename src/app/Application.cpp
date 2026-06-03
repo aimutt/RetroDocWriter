@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "editor/CharStyle.h"
+#include "editor/ListNumber.h"
 #include "editor/Palette.h"
 #include "editor/Utf8.h"
 #include "editor/WordCount.h"
@@ -3387,8 +3388,9 @@ void Application::ExecuteMenuItem(int menuIdx, int itemIdx)
                 case 10: SetParagraphAlignment(ParagraphAlign::Justify); break;
                 // 11 = separator
                 case 12: ToggleBulletList();    break;
-                // 13 = separator
-                case 14: InsertPageBreak();     break;
+                case 13: ToggleNumberedList();  break;
+                // 14 = separator
+                case 15: InsertPageBreak();     break;
                 default: break;
             }
             break;
@@ -4311,6 +4313,8 @@ void Application::ClosePrintDialog(bool commit)
     m_printRequest.pageBreakBefore = &m_document->Buffer().PageBreaks();
     m_printRequest.alignment       = &m_document->Buffer().Alignments();
     m_printRequest.listLevels      = &m_document->Buffer().ListLevels();
+    m_printNumberLabels            = ComputeNumberedLabels(m_document->Buffer());
+    m_printRequest.listNumberLabels = &m_printNumberLabels;
     m_printRequest.header               = m_header;
     m_printRequest.footer               = m_footer;
     m_printRequest.floats               = &m_document->Buffer().Floats();
@@ -4534,13 +4538,17 @@ void Application::SetParagraphAlignment(ParagraphAlign a)
     m_statusMessage = std::string("Alignment: ") + name;
 }
 
-void Application::ToggleBulletList()
+void Application::ToggleBulletList()   { ApplyListToggle(false); }
+void Application::ToggleNumberedList() { ApplyListToggle(true);  }
+
+void Application::ApplyListToggle(bool numbered)
 {
     // Span of paragraphs to toggle: the selection's rows, or just the cursor's
-    // row when there's no active selection. Bulleted-list level is a paragraph
-    // property, like alignment. The first row decides the direction: if it is
-    // not yet a list item, turn the whole span into top-level bullets; else
-    // clear list formatting across the span.
+    // row when there's no active selection. List state is a paragraph property,
+    // like alignment. The first row decides the direction: if it is already a
+    // list of *this* kind, clear list formatting across the span; otherwise turn
+    // the span into a list of this kind (converting the other kind, or starting
+    // at top level from a normal paragraph) — each row keeps its own level.
     int firstRow = m_cursor.row;
     int lastRow  = m_cursor.row;
     if (m_selection.active && !m_selection.IsEmpty(m_cursor.row, m_cursor.column))
@@ -4551,15 +4559,29 @@ void Application::ToggleBulletList()
         lastRow  = er;
     }
 
-    bool turnOn = m_document->Buffer().ListLevel(firstRow) == 0;
+    auto& buf = m_document->Buffer();
+    bool alreadyThisKind = buf.ListLevel(firstRow) >= 1
+                           && buf.ListNumbered(firstRow) == numbered;
+    bool turnOn = !alreadyThisKind;
+
     PushUndoBeforeEdit();
     for (int row = firstRow; row <= lastRow; ++row)
-        m_document->Buffer().SetListLevel(row, turnOn ? 1 : 0);
+    {
+        if (!turnOn)
+        {
+            buf.SetListLevel(row, 0);
+            continue;
+        }
+        int lvl = buf.ListLevel(row);
+        buf.SetListLevel(row, static_cast<uint8_t>(lvl >= 1 ? lvl : 1));
+        buf.SetListNumbered(row, numbered);
+    }
     m_document->MarkDirty();
     UpdateWindowTitle();
     m_lastActionWasInsert = false;
 
-    m_statusMessage = turnOn ? "Bulleted List: On" : "Bulleted List: Off";
+    m_statusMessage = std::string(numbered ? "Numbered List: " : "Bulleted List: ")
+                    + (turnOn ? "On" : "Off");
 }
 
 // ---------------------------------------------------------------------------
