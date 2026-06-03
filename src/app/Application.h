@@ -189,9 +189,13 @@ private:
     int  ComputeScreenColumns(int cellWidth) const;
     void HandleWindowResized(int newW, int newH);
 
-    // WYSIWYG scrollbar — used by arrow clicks and thumb drag to keep the
-    // cursor on the topmost visible row after the user scrolls.
-    void UpdateCursorToViewportTop();
+    // WYSIWYG scroll helpers. The document scroll offset is independent of the
+    // caret: "scroll to caret" fires only as an event when the caret moves or
+    // the content changes (see CaretOrContentChangedSinceLastFrame), and the
+    // offset is bounded to [0, WysiwygMaxScrollPx()] every frame.
+    int  WysiwygMaxScrollPx() const;
+    bool CaretOrContentChangedSinceLastFrame();
+    void ResetWysiwygScrollState();
 
     // Font / window resizing
     void OpenFontDialog();
@@ -488,6 +492,12 @@ private:
 
     WysiwygMargins   m_margins;
     int              m_wysiwygScrollPx = 0;
+    // Previous-frame caret/content snapshot driving the event-based scroll-to-
+    // caret. Sentinels (-1 / 0xFFFFFFFF) force one clamp on the first frame
+    // after construction or a file open/new.
+    int              m_prevCursorRow      = -1;
+    int              m_prevCursorCol      = -1;
+    uint32_t         m_prevContentVersion = 0xFFFFFFFFu;
     std::unique_ptr<WysiwygRenderer> m_wysiwyg;
     // Margins dialog edit-in-progress strings (top, bottom, left, right)
     std::string      m_marginEditText[4];

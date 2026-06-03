@@ -52,6 +52,11 @@ public:
     void MarkSaved() { m_savedVersion = m_currentVersion; }
     bool IsAtSavedState() const { return m_currentVersion == m_savedVersion; }
 
+    // Monotonic version tag of the LIVE buffer. Advances on PushEdit and moves
+    // in lockstep on Undo/Redo. The WYSIWYG scroll logic compares this between
+    // frames to detect content edits that change layout without moving the caret.
+    uint32_t CurrentVersion() const { return m_currentVersion; }
+
 private:
     static RichUndoState Snapshot(const FormattedTextBuffer& buf, int row, int col);
 

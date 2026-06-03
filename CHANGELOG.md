@@ -7,6 +7,11 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 ## [Unreleased]
 
 ### Fixed
+- You can now scroll all the way to the bottom of the last page when a document
+  runs a little past a page boundary; the view no longer snaps back before the
+  empty remainder of the page.
+- Using the scrollbar (arrows or thumb drag) to move through a document no longer
+  moves the text cursor — the caret stays exactly where you left it.
 - Dragging a floating image (or shape) into a different paragraph now re-anchors
   it to that paragraph on drop, so the text there wraps around it. Previously an
   image moved into an earlier paragraph would just hover over and cover that
