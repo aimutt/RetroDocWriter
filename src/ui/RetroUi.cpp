@@ -1608,7 +1608,7 @@ namespace
 {
     constexpr int kHfW = 78;
     constexpr int kHfH = 13;
-    const char* const kHfHint = "[Tab] Slot [Spc] Kind [Up/Dn] Fmt [Enter] OK [Esc] Cancel";
+    const char* const kHfHint = "[Tab] Slot [<-/->] Kind [Up/Dn] Fmt [Enter] OK [Esc] Cancel";
     const char* const kHfLabels[6] = {
         "Header Left:",
         "Header Center:",
