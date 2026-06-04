@@ -6,6 +6,8 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-03
+
 ### Added
 - **Bulleted lists** (**Format > Bulleted List**) with multi-level sub-bullets
   that change shape by depth (• ◦ ▪, cycling). Turn the current paragraph(s)
@@ -29,6 +31,10 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
 ### Changed
 - Renamed two Format menu items for clarity: **Text Color…** → **Color Text…**
   and **Highlight Color…** → **Highlight…**.
+- New first-run defaults (only affect a fresh install with no saved settings —
+  existing users keep their choices): the **White** theme instead of green,
+  **Spell Check on**, misspelled-word highlighting **off**, and page margin
+  guides **hidden**.
 
 ### Fixed
 - **Page > Header / Footer…** dialog: choosing a slot's kind was stuck on *Text* —
