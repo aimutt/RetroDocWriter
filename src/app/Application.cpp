@@ -1183,21 +1183,14 @@ void Application::HandlePromptKeyDown(const SDL_KeyboardEvent& key)
         switch (key.scancode)
         {
             case SDL_SCANCODE_TAB:       HeaderFooterCycleField(shift ? -1 : +1); return;
-            case SDL_SCANCODE_SPACE:
-            {
-                // Space cycles the row's Kind, EXCEPT while a CustomText slot
-                // is focused — there the user is typing text, so a literal
-                // space must land in the buffer (let the TEXT_INPUT event
-                // through). Same idiom as the Print dialog's RangeMode space.
-                const int idx = m_hfFocusIdx;
-                const auto& slot = (idx < 3) ? m_header.slots[static_cast<size_t>(idx)]
-                                             : m_footer.slots[static_cast<size_t>(idx - 3)];
-                if (slot.kind == HeaderFooterSlotKind::CustomText)
-                    return;   // fall through to HandleTextInput
-                HeaderFooterCycleKind(+1);
-                m_swallowNextTextInput = true;   // drop the literal space
-                return;
-            }
+            // Left/Right cycle the row's Kind through all states. Space is left
+            // unhandled here on purpose: its SDL_EVENT_TEXT_INPUT falls through
+            // to HeaderFooterTextEdit so a literal space lands in a CustomText
+            // slot (and is a harmless no-op for other kinds), exactly like the
+            // letter keys. Decoupling Kind selection from Space avoids the old
+            // trap where reaching CustomText made the rest unreachable.
+            case SDL_SCANCODE_LEFT:      HeaderFooterCycleKind(-1);               return;
+            case SDL_SCANCODE_RIGHT:     HeaderFooterCycleKind(+1);               return;
             case SDL_SCANCODE_UP:        HeaderFooterCycleFmt(+1);                return;
             case SDL_SCANCODE_DOWN:      HeaderFooterCycleFmt(-1);                return;
             case SDL_SCANCODE_BACKSPACE: HeaderFooterBackspace();                 return;

@@ -31,6 +31,10 @@ the EXE/installer version (`RetroDocWriter.rc`, `installer\RetroDocWriter.iss`).
   and **Highlight Color…** → **Highlight…**.
 
 ### Fixed
+- **Page > Header / Footer…** dialog: choosing a slot's kind was stuck on *Text* —
+  *Filename*, *Page #*, and *Date* were unreachable and the Up/Dn format keys
+  appeared dead. Cycle the kind with the **Left/Right** arrows now (Space types a
+  literal space into the custom-text field).
 - You can now scroll all the way to the bottom of the last page when a document
   runs a little past a page boundary; the view no longer snaps back before the
   empty remainder of the page.
