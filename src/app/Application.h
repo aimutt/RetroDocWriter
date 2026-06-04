@@ -460,15 +460,17 @@ private:
     bool         m_showWordCount      = false;
 
     // Spell check (global; persisted under %LOCALAPPDATA%\RetroEdit\)
-    bool         m_spellCheckEnabled    = false;
+    // First-run defaults: spell check on, but misspellings not highlighted
+    // (these apply only when config.ini has no key yet; existing users keep
+    // whatever they previously persisted).
+    bool         m_spellCheckEnabled    = true;
     bool         m_highlightMisspelled  = false;
     Dictionary   m_dictionary;
 
     // WYSIWYG-only: show/hide the dim margin guides drawn inside each page
-    // rectangle. Persisted globally as `show_margins` in config.ini; defaults
-    // to true so existing users keep the current look on first launch with
-    // the new toggle.
-    bool         m_showMargins          = true;
+    // rectangle. Persisted globally as `show_margins` in config.ini; first-run
+    // default is off (existing users keep whatever they previously persisted).
+    bool         m_showMargins          = false;
 
     // WYSIWYG + print page chrome: four independent slots placing the file
     // name (left) and page number (right) in the top-margin header and/or the
@@ -530,7 +532,8 @@ private:
     InsertImageField   m_insertImageFocus = InsertImageField::Path;
 
     Layout                          m_layout;
-    ThemeName                       m_themeName = ThemeName::Green;
+    // First-run default theme (existing users keep their persisted theme_name).
+    ThemeName                       m_themeName = ThemeName::White;
     Theme                           m_theme;
     std::unique_ptr<Window>         m_window;
     std::unique_ptr<ScreenBuffer>   m_screenBuffer;

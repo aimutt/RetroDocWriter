@@ -1,0 +1,84 @@
+==============================================================================
+ RetroDocWriter 0.2.0 - Release Notes
+ 2026-06-03
+==============================================================================
+
+Thanks for installing RetroDocWriter! Here is what's new since version 0.1.
+
+------------------------------------------------------------------------------
+ NEW
+------------------------------------------------------------------------------
+
+* Bulleted lists (Format > Bulleted List)
+  Multi-level sub-bullets that change shape by depth. Turn a paragraph into a
+  list, then build it from the keyboard:
+    - Enter      starts the next item
+    - Tab        at the start of an item makes it a sub-bullet (indent)
+    - Shift+Tab  un-indents
+    - Backspace  at the start of an item un-indents one level; a final
+                 Backspace on a top-level bullet leaves the list
+  Lists render and print with a hanging indent and round-trip through RTF.
+
+* Numbered lists (Format > Numbered List)
+  Legal/multilevel numbering (1., 2., then 2.1, 2.2, then 2.2.1). Same keyboard
+  nesting as bulleted lists; numbers renumber automatically as you add, indent,
+  or remove items. Toggling Bulleted vs Numbered switches a paragraph between
+  the two.
+
+* Browse buttons for picking files
+  - Insert > Image... now has a Browse button (or Ctrl+B) that opens the in-app
+    file browser filtered to images (PNG/JPEG/BMP/GIF) and fills in the path.
+  - The Open and Save As dialogs gained a Browse button too, and now show the
+    target directory (Dir: ...) above the file-name field.
+
+* Save As overwrite warning
+  Saving over an existing file now asks first: Overwrite, Rename, or Cancel.
+
+------------------------------------------------------------------------------
+ CHANGED
+------------------------------------------------------------------------------
+
+* New first-run defaults (fresh installs only - if you already used 0.1, your
+  saved settings are kept):
+    - White theme instead of the green retro look
+    - Spell Check ON
+    - Misspelled-word highlighting OFF
+    - Page margin guides hidden
+  All of these can still be changed under the Options and Page menus.
+
+* The default document font is Source Sans 3 12 pt. Existing documents keep
+  the font they were saved with.
+
+* Two Format menu items were renamed for clarity:
+  Text Color... -> Color Text...,  Highlight Color... -> Highlight...
+
+------------------------------------------------------------------------------
+ FIXED
+------------------------------------------------------------------------------
+
+* Page > Header / Footer... : you can now reach the Filename, Page #, and Date
+  slot kinds (cycle with the Left/Right arrows; Up/Down picks the page-number
+  format).
+* You can now scroll all the way to the bottom of the last page when a document
+  runs slightly past a page boundary.
+* Using the scrollbar no longer moves the text cursor - the caret stays put.
+* Dragging a floating image (or shape) into a different paragraph now
+  re-anchors it there so the text wraps around it correctly.
+* Typed text now inherits the formatting of the character before the cursor
+  instead of "sticking" to the last size/style used. Typing on a blank line
+  continues the nearest text's font, and the status bar shows the face and
+  point size that will actually be typed.
+
+------------------------------------------------------------------------------
+ REVERTING TO AN OLDER VERSION
+------------------------------------------------------------------------------
+
+If you prefer a previous release, uninstall this one (Windows "Apps", or
+unins000.exe in the install folder) and run that version's own setup file from
+the GitHub Releases page. Uninstalling never removes the .rtf documents you
+created.
+
+------------------------------------------------------------------------------
+ https://github.com/aimutt/RetroDocWriter
+ https://aimutt.com/projects/retrodocwriter.html
+==============================================================================

@@ -9,8 +9,8 @@
 // Version / product information shown in the EXE's Properties > Details dialog
 // and used by Windows (and SmartScreen) to identify the application.
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,1,0,0
- PRODUCTVERSION 0,1,0,0
+ FILEVERSION 0,2,0,0
+ PRODUCTVERSION 0,2,0,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -23,11 +23,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "aimutt.com"
             VALUE "FileDescription",  "RetroDocWriter"
-            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "FileVersion",      "0.2.0.0"
             VALUE "InternalName",     "RetroDocWriter"
             VALUE "OriginalFilename", "RetroDocWriter.exe"
             VALUE "ProductName",      "RetroDocWriter"
-            VALUE "ProductVersion",   "0.1.0.0"
+            VALUE "ProductVersion",   "0.2.0.0"
             VALUE "LegalCopyright",   "Copyright (c) 2026 aimutt.com"
         END
     END
